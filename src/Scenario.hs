@@ -17,34 +17,49 @@ module Scenario where
 import           Control.Monad
 import           Data.Array
 import           Data.Foldable hiding (concat)
-
+import           Data.Maybe
 
 data Feature = Wall | Floor | Object | Target | TargetX deriving (Show, Eq, Enum)
 
-data DenyReason = PathBlocked | ShiftBlocked deriving (Show, Eq, Enum)
+data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Show, Enum)
 
+data DenyReason = PathBlocked | ShiftBlocked | OutsideWorld deriving (Show, Eq, Enum)
+
+-- | Feature can be walked on?
 walkable :: Feature -> Bool
 walkable Floor  = True
 walkable Target = True
 walkable _      = False
 
+-- | Feature can be shifted?
 shiftable :: Feature -> Bool
-shiftable Floor   = True
-shiftable Target  = True
+shiftable Object  = True
 shiftable TargetX = True
 shiftable _       = False
 
+-- | Features can be shifted onto this feature?
+targetable :: Feature -> Bool
+targetable Floor   = True
+targetable Target  = True
+targetable TargetX = False
+targetable _       = False
+
 combineFeatures :: Feature -> Feature -> (Feature, Int)
 combineFeatures Target  Object  = (TargetX, -1)
-combineFeatures Target  Target  = (Target,   0)
-combineFeatures Target  new     = (new,      1) -- target destroyed, still counts as target to "fill"
+combineFeatures Target  TargetX = (TargetX,  0)
+combineFeatures Target  _       = (Target,   0)
 combineFeatures TargetX Object  = (TargetX,  0)
-combineFeatures TargetX Target  = (Target,   1)
 combineFeatures TargetX TargetX = (TargetX,  0)
-combineFeatures TargetX new     = (new,      1) -- target destroyed, still counts as target to "fill"
+combineFeatures TargetX _       = (Target,   1)
 combineFeatures _       new     = (new,      0)
 
 type Coord = (Int, Int) -- ^ (x, y) coordinates
+
+moveCoordinate :: PlayerMovement -> Coord -> Coord
+moveCoordinate MLeft  (x, y) = (x-1, y)
+moveCoordinate MRight (x, y) = (x+1, y)
+moveCoordinate MUp    (x, y) = (x, y-1)
+moveCoordinate MDown  (x, y) = (x, y+1)
 
 class Scenario s where
   isInside :: Coord -> s -> Bool
@@ -95,8 +110,30 @@ data ScenarioUpdate = ScenarioUpdate
                       , newEmptyTargets :: Int
                       } deriving (Eq, Show)
 
-performPlayerMove :: Scenario sc => Coord -> ScenarioState sc -> Either DenyReason ScenarioUpdate
-performPlayerMove c sc = undefined --todo
+askPlayerMove :: Scenario sc => PlayerMovement -> ScenarioState sc -> Either DenyReason ScenarioUpdate
+askPlayerMove dir scs =
+    do let sc = scenario scs
+           p = playerCoord scs         -- player coord
+           tp = moveCoordinate dir p   -- move target coord
+       if isInside tp sc
+         then do let ft = fromJust $ getFeature tp sc -- move target feature
+                     cs = moveCoordinate dir tp       -- shift target coord
+                     fs :: Maybe Feature
+                     fs = getFeature cs sc            -- shift target feature
+                 if walkable ft
+                   then Right $ ScenarioUpdate { changedFeatures = []
+                                               , newPlayerCoord = tp
+                                               , newEmptyTargets = emptyTargets scs }
+                   else case (shiftable ft, (not . isNothing) fs && targetable (fromJust fs)) of
+                             (True, True)  -> Right $
+                                  let (ft1, targetChange1) = combineFeatures ft            Floor
+                                      (ft2, targetChange2) = combineFeatures (fromJust fs) ft
+                                  in ScenarioUpdate { changedFeatures = [(tp, ft1), (cs, ft2)]
+                                                    , newPlayerCoord = tp
+                                                    , newEmptyTargets = emptyTargets scs + targetChange1 + targetChange2 }
+                             (True, False) -> Left ShiftBlocked
+                             _ -> Left PathBlocked
+         else Left OutsideWorld
 
 
 updateScenario :: Scenario sc => ScenarioState sc -> ScenarioUpdate -> ScenarioState sc
