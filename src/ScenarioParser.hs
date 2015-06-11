@@ -70,7 +70,7 @@ data ParseState = ParseState
                 , freeTargets  :: Int
                 , objectCount  :: Int
                 , warnings     :: [ParseWarning]
-                }
+                } deriving (Eq, Show)
 
 initParseState :: ParseState
 initParseState = ParseState [] 0 Nothing  0 0 0 []
@@ -145,8 +145,9 @@ parseScenario text = do let allLines = B.lines text
                           modify (\s -> s { warnings = ScenarioEmpty : warnings s })
                         -- create scenario
                         s <- get
-                        let rowMax = rowLength - 1
-                            colMax = linesCount s - 1
-                            scArray = array ((0,0), (rowMax,colMax)) (createScenarioArrayList colMax rowMax (linesReverse s))
+                        let rowMax = linesCount s - 1
+                            colMax = rowLength - 1
+                            arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
+                            scArray = array ((0,0), (colMax,rowMax)) arrayList
                         return $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s)
 
