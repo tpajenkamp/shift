@@ -12,10 +12,6 @@
 --
 -----------------------------------------------------------------------------
 
-{--
-Parser overcomplicates things and is overkill since its special features are not needed
---}
-
 module ScenarioParser{-- (
 parseScenario, ParseState(..), initParseState
 ) --} where
@@ -25,7 +21,8 @@ parseScenario, ParseState(..), initParseState
 import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.Trans
-import           Control.Monad.State.Lazy
+import           Control.Monad.Trans.State.Lazy
+--import           Control.Monad.State.Lazy
 import           Data.Array (Array, array)
 import qualified Data.Array as A
 import           Data.Attoparsec.ByteString.Char8 as A
@@ -75,7 +72,7 @@ data ParseState = ParseState
 initParseState :: ParseState
 initParseState = ParseState [] 0 Nothing  0 0 0 []
 
-parseEntry :: Int -> Char -> State ParseState Feature
+parseEntry :: Monad m => Int -> Char -> StateT ParseState m Feature
 parseEntry row ch = case ch of
                          '#' -> return Wall
                          '@' -> do modify setPlayer
@@ -103,15 +100,15 @@ parseEntry row ch = case ch of
         addObject s = s { objectCount = 1 + objectCount s }
 
 
-parseLine :: ByteString -> State ParseState ()
-parseLine line = do let lineLength' = B.length line
-                        lineLength  = if lineLength' > 0 && B.last line /= '\r' then lineLength' else lineLength' - 1
-                    newLine <- V.generateM lineLength (tokenParser line)
-                    when ((not . V.null) newLine) $
-                      modify (\s -> s { linesReverse = newLine : linesReverse s
-                                    , linesCount = 1 + linesCount s })
- where tokenParser :: ByteString -> Int -> State ParseState Feature
-       tokenParser line row = parseEntry row (line `B.index` row)
+parseLine :: StateT ParseState Parser ()
+parseLine = do line <- lift $ A.takeWhile (\c -> c /= '\n' && c /= '\r') -- break on line ends
+               let lineLength = B.length line
+               newLine <- V.generateM lineLength (tokenParser line)
+               when ((not . V.null) newLine) $
+                   modify (\s -> s { linesReverse = newLine : linesReverse s
+                                   , linesCount = 1 + linesCount s })
+  where tokenParser :: Monad m => ByteString -> Int -> StateT ParseState m Feature
+        tokenParser line row = parseEntry row (line `B.index` row)
 
 
 --mostFrequent :: Ord a => [a] -> a
@@ -125,29 +122,34 @@ createScenarioArrayList maxCol row (line:rem) = let lineMax = V.length line - 1
                         map (\c -> ((c, row), Wall)) [maxIx + 1 .. maxCol]
 createScenarioArrayList _ _ [] = []
 
-parseScenario :: ByteString -> State ParseState (ScenarioState MatrixScenario)
-parseScenario text = do let allLines = B.lines text
-                        mapM parseLine allLines
-                        -- sanity tests
-                        s <- get
-                        when (targetCount s /= objectCount s) $
-                          modify (\s -> s { warnings = ObjectTargetMismatch (objectCount s) (targetCount s) : warnings s })
-                        s <- get
-                        when (targetCount s == 0) $
-                          modify (\s -> s { warnings = NoTarget : warnings s })
-                        s <- get
-                        when ((isNothing . userCoord) s) $
-                          modify (\s -> s { warnings = NoPlayerToken : warnings s })
-                        s <- get
-                        let rowCounts = map V.length (linesReverse s)
-                            rowLength = if (not . null) rowCounts then maximum rowCounts else 0
-                        when ((null . linesReverse) s) $
-                          modify (\s -> s { warnings = ScenarioEmpty : warnings s })
-                        -- create scenario
-                        s <- get
-                        let rowMax = linesCount s - 1
-                            colMax = rowLength - 1
-                            arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
-                            scArray = array ((0,0), (colMax,rowMax)) arrayList
-                        return $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s)
+parseData :: StateT ParseState Parser ()
+parseData = do parseLine
+               nextChar <- lift peekChar
+               case nextChar of
+                    Nothing -> return ()
+                    _ -> lift endOfLine <* parseData
 
+parseScenario :: StateT ParseState Parser (ScenarioState MatrixScenario)
+parseScenario = do parseData -- many $ parseLine <* lift endOfLine -- does not handle endOfInput
+                   -- sanity tests
+                   s <- get
+                   when (targetCount s /= objectCount s) $
+                       modify (\s -> s { warnings = ObjectTargetMismatch (objectCount s) (targetCount s) : warnings s })
+                   s <- get
+                   when (targetCount s == 0) $
+                       modify (\s -> s { warnings = NoTarget : warnings s })
+                   s <- get
+                   when ((isNothing . userCoord) s) $
+                       modify (\s -> s { warnings = NoPlayerToken : warnings s })
+                   s <- get
+                   let rowCounts = map V.length (linesReverse s)
+                       rowLength = if (not . null) rowCounts then maximum rowCounts else 0
+                   when ((null . linesReverse) s) $
+                       modify (\s -> s { warnings = ScenarioEmpty : warnings s })
+                   -- create scenario
+                   s <- get
+                   let rowMax = linesCount s - 1
+                       colMax = rowLength - 1
+                       arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
+                       scArray = array ((0,0), (colMax,rowMax)) arrayList
+                   return $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s)
