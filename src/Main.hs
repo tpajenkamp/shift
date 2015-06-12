@@ -38,6 +38,12 @@ main = do
    --
    initGUI
    window <- windowNew
+   textArea <- textViewNew
+   textViewSetEditable  textArea False
+   textViewSetCursorVisible textArea False
+   textBuffer <- textViewGetBuffer textArea
+   textBufferSetByteString textBuffer (B.pack "Hallo Welt!")
+   set window [ containerChild := textArea]
    window `on` deleteEvent $ liftIO mainQuit >> return False
    widgetShowAll window
    mainGUI
