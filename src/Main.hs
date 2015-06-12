@@ -1,9 +1,9 @@
 module Main where
 
-import           Control.DeepSeq
+--import           Control.DeepSeq
 import           Control.Exception.Base
 import           Control.Monad.State.Lazy
-import           Control.Monad.Trans(liftIO)
+--import           Control.Monad.Trans(liftIO)
 import           Data.Attoparsec.ByteString.Char8 (parse, parseOnly)
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
@@ -12,7 +12,6 @@ import           Helpers
 import           System.Environment
 
 import Graphics.UI.Gtk
-import Graphics.UI.Gtk.Multiline.TextView
 import Scenario
 import ScenarioParser
 
@@ -22,12 +21,13 @@ testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario
                              do guard False
                                 (error . fromLeft) possiblyParsed
                          let (scenarioState, parseState) = fromRight possiblyParsed
-                         evaluate scenarioState
+                         _ <- evaluate scenarioState
                          putStrLn "warnings:"
                          putStrLn $ (unlines . map show . warnings) parseState
                          (putStrLn . showScenario . scenario) scenarioState
 
 
+main :: IO ()
 main = do
    args <- getArgs
    let levelPath = if null args
@@ -36,7 +36,7 @@ main = do
    levelRaw <- B.readFile levelPath
    testParser levelRaw
    --
-   initGUI
+   _ <- initGUI
    window <- windowNew
    textArea <- textViewNew
    textViewSetEditable  textArea False
@@ -44,6 +44,6 @@ main = do
    textBuffer <- textViewGetBuffer textArea
    textBufferSetByteString textBuffer (B.pack "Hallo Welt!")
    set window [ containerChild := textArea]
-   window `on` deleteEvent $ liftIO mainQuit >> return False
+   _ <- window `on` deleteEvent $ liftIO mainQuit >> return False
    widgetShowAll window
    mainGUI

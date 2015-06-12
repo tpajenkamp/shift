@@ -16,7 +16,6 @@ module Scenario where
 
 import           Control.Monad
 import           Data.Array
-import           Data.Foldable hiding (concat)
 import           Data.Maybe
 
 data Feature = Wall | Floor | Object | Target | TargetX deriving (Show, Eq, Enum)
@@ -67,7 +66,7 @@ class Scenario s where
   setFeature :: Coord -> Feature -> s -> Maybe s
   modifyFeature :: Coord -> (Feature -> Feature) -> s -> Maybe s
   modifyFeature c f sc = do ft <- getFeature c sc
-                            setFeature c ft sc
+                            setFeature c (f ft) sc
 
 newtype MatrixScenario = MatrixScenario { matrix :: Array Coord Feature } deriving(Eq, Show)
 
