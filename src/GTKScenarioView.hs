@@ -14,4 +14,4 @@ createTextViewLink = UpdateListener . textViewListenerFunction
 textViewListenerFunction :: TextBuffer -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
 textViewListenerFunction tBuffer _ = do scState <- ask -- todo: player position
                                         liftIO $ putStrLn "listener called"
-                                        (liftIO . textBufferSetByteString tBuffer . B.pack . showScenario . scenario) scState
+                                        (liftIO . textBufferSetByteString tBuffer . showScenario . scenario) scState

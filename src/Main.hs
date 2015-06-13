@@ -15,7 +15,6 @@ import           System.Environment
 import Graphics.UI.Gtk
 
 import GTKScenarioView
-import Helpers
 import Scenario
 import ScenarioController
 import ScenarioParser
@@ -30,7 +29,7 @@ testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario
                          putStrLn "warnings:"
                          putStrLn $ (unlines . map show . warnings) myParseState
                          putStrLn $ "player: " ++ (show . playerCoord) myScenarioState
-                         (putStrLn . showScenario . scenario) myScenarioState
+                         (B.putStrLn . showScenario . scenario) myScenarioState
                          return myScenarioState
 
 
