@@ -20,6 +20,8 @@ import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B hiding(ByteString)
 import           Data.Maybe
 
+--import Helpers
+
 -- | @Features@ are the doodads that can be placed in a scenario.
 data Feature = Wall    -- ^ static wall
              | Floor   -- ^ empty floor
@@ -115,6 +117,15 @@ instance Scenario MatrixScenario where
                                            then return $ MatrixScenario $ mat//[(c, ft)]
                                            else Nothing
 
+-- | Returns the internal matrix of a @MatrixScenario@.
+getMatrixScenarioArray :: MatrixScenario -> Array Coord Feature
+getMatrixScenarioArray (MatrixScenario a) = a
+
+-- | Returns the bounds of a @MatrixScenario@.
+--   The returned values are the lower @(x, y)@ and the upper @(x, y)@ bounds.
+--   All values between the bounds, including the bounds themselves, are valid coordinates for the scenario.
+getMatrixScenarioBounds :: MatrixScenario -> (Coord, Coord)
+getMatrixScenarioBounds = bounds . getMatrixScenarioArray
 
 -- | Single character representation of a @Feature@.
 showFeature :: Feature -> Char
@@ -192,17 +203,19 @@ askPlayerMove scs dir =
 
 
 -- | Performs a @ScenarioUpdate@ on the given @ScenarioState@.
---   The update is alqays possible if the @ScenarioUpdate@ has been computed via
+--   The update is always possible if the @ScenarioUpdate@ has been computed via
 --   'askPlayerMove' on the same @ScenarioState@. An error may occur otherwise.
 -- === See also
 -- > 'askPlayerMove'
 updateScenario :: Scenario sc => ScenarioState sc -> ScenarioUpdate -> ScenarioState sc
-updateScenario sc u = sc
-            { playerCoord = newPlayerCoord u
-            , scenario = case foldM (uncurry . setFeature) (scenario sc)  (changedFeatures u) of
-                              Just sc' -> sc'
-                              Nothing  -> error $ "invalid update step " ++ show u -- Nothing -> sc
-            , emptyTargets = newEmptyTargets u
-            }
+updateScenario scs u = let sc = scenario scs
+  in scs { playerCoord = if isInside sc (newPlayerCoord u)
+                           then newPlayerCoord u
+                           else error $ "Scenario.updateScenario: player outside scenario bounds " ++ show (newPlayerCoord u)
+         , scenario = case foldM (uncurry . setFeature) (scenario scs)  (changedFeatures u) of
+                           Just sc' -> sc'
+                           Nothing  -> error $ "Scenario.updateScenario: invalid update step " ++ show u
+         , emptyTargets = newEmptyTargets u
+         }
 
 
