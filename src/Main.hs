@@ -29,7 +29,7 @@ testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario
                          putStrLn "warnings:"
                          putStrLn $ (unlines . map show . warnings) myParseState
                          putStrLn $ "player: " ++ (show . playerCoord) myScenarioState
-                         (B.putStrLn . showScenario . scenario) myScenarioState
+                         (B.putStrLn . flip showScenarioWithPlayer (playerCoord myScenarioState) . scenario) myScenarioState
                          return myScenarioState
 
 

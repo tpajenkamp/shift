@@ -135,6 +135,11 @@ showFeature Object  = '$'
 showFeature Target  = '.'
 showFeature TargetX = '+'
 
+combinePlayerAndFeature :: Feature -> Char
+combinePlayerAndFeature Target =  '+'    -- Target
+combinePlayerAndFeature Wall   =  '@'    -- Floor
+combinePlayerAndFeature _      =  '@'    -- others are invalid, fall back
+
 -- | Converts a @MatrtixScenario@ into a easily readable string.
 showScenario :: MatrixScenario -> ByteString
 showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (0, 0)
@@ -144,9 +149,20 @@ showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) 
         seedFunc :: (Int, Int) -> Maybe (Char, (Int, Int))
         seedFunc c@(x, y)
           | y > yh      = Nothing                   -- finished last row
-          | x == xh + 1 = Just ('\n', (0, y+1))     -- end of row: linebreak and continue at next row
+          | x == xh + 1 = Just ('\n', (xl, y+1))     -- end of row: linebreak and continue at next row
           | otherwise   = Just (showFeature (mat!c), (x+1, y))    -- next character in row
 
+showScenarioWithPlayer :: MatrixScenario -> Coord -> ByteString
+showScenarioWithPlayer (MatrixScenario mat) pC = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (0, 0)
+  --                                                                 #rows + 1 for line breaks
+  where ((xl, yl), (xh, yh)) = bounds mat
+        lineLength = xh - xl + 1
+        seedFunc :: Coord -> Maybe (Char, Coord)
+        seedFunc c@(x, y)
+          | y > yh      = Nothing                   -- finished last row
+          | x == xh + 1 = Just ('\n', (xl, y+1))     -- end of row: linebreak and continue at next row
+          | c == pC     = Just (combinePlayerAndFeature (mat!c), (x+1, y))
+          | otherwise   = Just (showFeature (mat!c), (x+1, y))    -- next character in row
 
 -- | A @ScenarioState@ stores the current state of a game.
 data ScenarioState sc = ScenarioState

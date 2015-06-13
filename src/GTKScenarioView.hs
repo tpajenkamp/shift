@@ -13,17 +13,6 @@ createTextViewLink = UpdateListener . textViewListenerFunction
 
 textViewListenerFunction :: TextBuffer -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
 textViewListenerFunction tBuffer _ = do scState <- ask -- todo: player position
-                                        let (pX, pY) = playerCoord scState
-                                            sc       = scenario scState
-                                            levelStr = showScenario sc
-                                            ((xl, yl), (xh, _)) = getMatrixScenarioBounds sc
-                                            -- (#cols + 1) * (pY-yl) + (pX-xl)
-                                            playerCLinear = (xh - xl + 2) * (pY - yl) + (pX - xl)
-                                            (pre', succ') = B.splitAt (playerCLinear + 1) levelStr
-                                            levelStrWithPlayer = B.append (B.init pre') ((combinePlayerAndFeature . B.index levelStr) playerCLinear `B.cons` succ')
+                                        let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
                                         (liftIO . textBufferSetByteString tBuffer) levelStrWithPlayer
 
-combinePlayerAndFeature :: Char -> Char
-combinePlayerAndFeature '.' =  '+'    -- Target
-combinePlayerAndFeature ' ' =  '@'    -- Floor
-combinePlayerAndFeature _   =  '@'    -- others are invalid, fall back
