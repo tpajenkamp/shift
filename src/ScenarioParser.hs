@@ -72,10 +72,10 @@ initParseState :: ParseState
 initParseState = ParseState [] 0 Nothing  0 0 0 []
 
 -- | Parses a single 'Feature' and modifies the 'ParseState' accordingly.
-parseEntry :: Monad m => Int   -- ^ current row
+parseEntry :: Monad m => Int   -- ^ current column
                       -> Char  -- ^ character to parse
                       -> StateT ParseState m Feature
-parseEntry row ch = case ch of
+parseEntry col ch = case ch of
                          '#' -> return Wall
                          '@' -> do modify setPlayer
                                    return Floor
@@ -88,12 +88,12 @@ parseEntry row ch = case ch of
                          '*' -> do modify (addOccupiedTarget)
                                    return TargetX
                          ' ' -> return Floor
-                         _   -> do modify (\s -> s { warnings = InvalidCharacter (linesCount s, row) ch : warnings s })
+                         _   -> do modify (\s -> s { warnings = InvalidCharacter (col, linesCount s) ch : warnings s })
                                    return Wall
   where -- Add player corrdinates to state.
         setPlayer :: ParseState -> ParseState
         setPlayer s = if (isNothing . userCoord) s
-                        then s { userCoord = Just (linesCount s, row) }
+                        then s { userCoord = Just (col, linesCount s) }
                         else s { warnings = MultiplePlayerTokens : warnings s }
         -- Increment target count within state.
         addTarget :: ParseState -> ParseState
@@ -116,7 +116,7 @@ parseLine = do line <- lift $ AP.takeWhile (\c -> c /= '\n' && c /= '\r') -- bre
                    modify (\s -> s { linesReverse = newLine : linesReverse s
                                    , linesCount = 1 + linesCount s })
   where tokenParser :: Monad m => ByteString -> Int -> StateT ParseState m Feature
-        tokenParser line row = parseEntry row (line `B.index` row)
+        tokenParser line col = parseEntry col (line `B.index` col)
 
 
 -- | Creates a dense matrix @[((c,r), value]@ that can be passed to the 'array' generator function.
