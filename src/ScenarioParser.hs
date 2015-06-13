@@ -12,9 +12,9 @@
 --
 -----------------------------------------------------------------------------
 
-module ScenarioParser {- (
-parseScenario, ParseState(..), initParseState
-) -} where
+module ScenarioParser (
+parseScenario, ParseState(..), ParseWarning(..), initParseState
+) where
 
 --import           Prelude hiding ((//))
 
@@ -47,7 +47,7 @@ Floor 	(Space) 	0x20
 
 -}
 
-
+-- | Warnings and errors for parsing a scenario file.
 data ParseWarning = ObjectTargetMismatch Int Int
                   | InvalidCharacter Coord Char
                   | NoPlayerToken
@@ -56,20 +56,25 @@ data ParseWarning = ObjectTargetMismatch Int Int
                   | ScenarioEmpty
                   deriving (Eq, Show, Read)
 
+-- | Internal state while parsing
 data ParseState = ParseState
-                { linesReverse :: [Vector Feature]
-                , linesCount   :: Int
-                , userCoord    :: Maybe Coord
-                , targetCount  :: Int
-                , freeTargets  :: Int
-                , objectCount  :: Int
-                , warnings     :: [ParseWarning]
+                { linesReverse :: [Vector Feature] -- ^ all level rows, rows in reverse order; row lengthses do not need to match
+                , linesCount   :: Int              -- ^ current number of level rows, should be equal to @length linesReverse@
+                , userCoord    :: Maybe Coord      -- ^ player coordinates (if specified)
+                , targetCount  :: Int              -- ^ current number of target features ('Target' and 'TargetX')
+                , freeTargets  :: Int              -- ^ current number of free target features ('Target' only)
+                , objectCount  :: Int              -- ^ current number of shiftable objects ('Object' and 'TargetX')
+                , warnings     :: [ParseWarning]   -- ^ occurred warnigns so far
                 } deriving (Eq, Show, Read)
 
+-- | Initial empty 'ParseState'
 initParseState :: ParseState
 initParseState = ParseState [] 0 Nothing  0 0 0 []
 
-parseEntry :: Monad m => Int -> Char -> StateT ParseState m Feature
+-- | Parses a single 'Feature' and modifies the 'ParseState' accordingly.
+parseEntry :: Monad m => Int   -- ^ current row
+                      -> Char  -- ^ character to parse
+                      -> StateT ParseState m Feature
 parseEntry row ch = case ch of
                          '#' -> return Wall
                          '@' -> do modify setPlayer
@@ -85,33 +90,41 @@ parseEntry row ch = case ch of
                          ' ' -> return Floor
                          _   -> do modify (\s -> s { warnings = InvalidCharacter (linesCount s, row) ch : warnings s })
                                    return Wall
-  where setPlayer :: ParseState -> ParseState
+  where -- Add player corrdinates to state.
+        setPlayer :: ParseState -> ParseState
         setPlayer s = if (isNothing . userCoord) s
                         then s { userCoord = Just (linesCount s, row) }
                         else s { warnings = MultiplePlayerTokens : warnings s }
+        -- Increment target count within state.
         addTarget :: ParseState -> ParseState
         addTarget s = s { targetCount = 1 + targetCount s, freeTargets = 1 + freeTargets s }
+        -- Increment target and object count within state.
         addOccupiedTarget :: ParseState -> ParseState
         addOccupiedTarget s = s { targetCount = 1 + targetCount s, objectCount = 1 + objectCount s }
+        -- Increment object count within state.
         addObject :: ParseState -> ParseState
         addObject s = s { objectCount = 1 + objectCount s }
 
 
+-- | Parses a single line of a level string.
+--   Ignores empty lines.
 parseLine :: StateT ParseState Parser ()
 parseLine = do line <- lift $ AP.takeWhile (\c -> c /= '\n' && c /= '\r') -- break on line ends
                let lineLength = B.length line
-               newLine <- V.generateM lineLength (tokenParser line)
-               when ((not . V.null) newLine) $
+               newLine <- V.generateM lineLength (tokenParser line) -- new row vector has fitting line length
+               when ((not . V.null) newLine) $ -- add row only if it is not empty
                    modify (\s -> s { linesReverse = newLine : linesReverse s
                                    , linesCount = 1 + linesCount s })
   where tokenParser :: Monad m => ByteString -> Int -> StateT ParseState m Feature
         tokenParser line row = parseEntry row (line `B.index` row)
 
 
---mostFrequent :: Ord a => [a] -> a
---mostFrequent = head . maximumBy (comparing length) . group . sort
-
-createScenarioArrayList :: Int -> Int -> [Vector Feature] -> [(Coord, Feature)]
+-- | Creates a dense matrix @[((c,r), value]@ that can be passed to the 'array' generator function.
+--   If a row ends prematurely the missing values are filled with 'Wall'.
+createScenarioArrayList :: Int                -- ^ number of columns in matrix, vector entries beyond are ignored
+                        -> Int                -- ^ current row (index starts with @0@),provide last row of matrix first
+                        -> [Vector Feature]   -- ^ rows of data in reverse order
+                        -> [(Coord, Feature)]
 createScenarioArrayList maxCol row (line:ls) = let lineMax = V.length line - 1
                                                    maxIx = min lineMax maxCol
                  in createScenarioArrayList maxCol (row - 1) ls ++
@@ -119,6 +132,7 @@ createScenarioArrayList maxCol row (line:ls) = let lineMax = V.length line - 1
                         map (\c -> ((c, row), Wall)) [maxIx + 1 .. maxCol]
 createScenarioArrayList _ _ [] = []
 
+-- | Parses string line by line and end at end of input.
 parseData :: StateT ParseState Parser ()
 parseData = do parseLine
                nextChar <- lift peekChar
@@ -126,6 +140,10 @@ parseData = do parseLine
                     Nothing -> return ()
                     _ -> lift endOfLine <* parseData
 
+-- | Parses a level string.
+--   Does not fail, the state's 'warnings' field may provide hints for the validity of the string.
+--   If no player position could be found it is set to @(0, 0)@ and the 'NoPlayerToken' warning is added.
+--   The first found player token (scanning rowwise) is selected.
 parseScenario :: StateT ParseState Parser (ScenarioState MatrixScenario)
 parseScenario = do parseData -- many $ parseLine <* lift endOfLine -- does not handle endOfInput
                    -- sanity tests

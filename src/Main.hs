@@ -30,20 +30,23 @@ testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario
 
 main :: IO ()
 main = do
+   -- read level
    args <- getArgs
    let levelPath = if null args
                      then "level.txt"
                      else head args
    levelRaw <- B.readFile levelPath
    testParser levelRaw
-   --
+   -- initialize window
    _ <- initGUI
    window <- windowNew
+   -- add text view
    textArea <- textViewNew
    textViewSetEditable  textArea False
    textViewSetCursorVisible textArea False
    textBuffer <- textViewGetBuffer textArea
    textBufferSetByteString textBuffer (B.pack "Hallo Welt!")
+   -- finalize window
    set window [ containerChild := textArea]
    _ <- window `on` deleteEvent $ liftIO mainQuit >> return False
    widgetShowAll window

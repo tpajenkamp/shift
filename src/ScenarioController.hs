@@ -8,10 +8,13 @@ import Control.Monad.Trans.State.Lazy
 
 import Scenario
 
+-- | A listener that can be informed about @ScenarioUpdate@s.
 newtype UpdateListener sc = UpdateListener { notifyUpdate :: ScenarioUpdate -> ReaderT (ScenarioState sc) IO () }
 
-data ControllerState sc = ControllerState { scenarioState :: ScenarioState sc
-                                          , listeners     :: [UpdateListener sc] }
+-- | The state of a controller handling communication between model and view
+data ControllerState sc = ControllerState { scenarioState :: ScenarioState sc     -- ^ the game state
+                                          , listeners     :: [UpdateListener sc]  -- ^ all known listeners
+                                          }
 
 
 instance Show sc => Show (ControllerState sc) where
@@ -23,7 +26,7 @@ initControllerState :: ScenarioState sc -> ControllerState sc
 initControllerState sc = ControllerState sc []
 
 -- | Adds a listener to be notified about a changed scenario.
-addListener :: UpdateListener sc -> State (ControllerState sc) ()
+addListener :: Monad m => UpdateListener sc -> StateT (ControllerState sc) m ()
 addListener l = do modify (\cs -> cs { listeners = l : listeners cs })
 
 -- | Tries to move the player into the specified direction.
@@ -32,7 +35,7 @@ addListener l = do modify (\cs -> cs { listeners = l : listeners cs })
 runPlayerMove :: Scenario sc => PlayerMovement -> StateT (ControllerState sc) IO (Maybe DenyReason)
 runPlayerMove move = do cs <- get
                         let s = scenarioState cs
-                        case askPlayerMove move s of
+                        case askPlayerMove s move of
                              (Left reason) -> (return . Just) reason -- propagate reason for invalid move
                              (Right update) -> do -- update internal ScenarioState
                                                   put $ cs { scenarioState = updateScenario s update }
