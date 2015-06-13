@@ -18,11 +18,11 @@ import           Control.Monad
 import           Data.Array
 import           Data.Maybe
 
-data Feature = Wall | Floor | Object | Target | TargetX deriving (Show, Eq, Enum)
+data Feature = Wall | Floor | Object | Target | TargetX deriving (Eq, Enum, Show, Read)
 
-data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Show, Enum)
+data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Enum, Show, Read)
 
-data DenyReason = PathBlocked | ShiftBlocked | OutsideWorld deriving (Show, Eq, Enum)
+data DenyReason = PathBlocked | ShiftBlocked | OutsideWorld deriving (Eq, Enum, Show, Read)
 
 -- | Feature can be walked on?
 walkable :: Feature -> Bool
@@ -97,7 +97,7 @@ data ScenarioState sc = ScenarioState
                         { playerCoord  :: Coord
                         , scenario     :: sc
                         , emptyTargets :: Int
-                        } deriving (Eq, Show)
+                        } deriving (Eq, Show, Read)
 
 isWinningState :: ScenarioState sc -> Bool
 isWinningState st = emptyTargets st == 0
@@ -107,7 +107,7 @@ data ScenarioUpdate = ScenarioUpdate
                       { changedFeatures :: [(Coord, Feature)]
                       , newPlayerCoord  :: Coord
                       , newEmptyTargets :: Int
-                      } deriving (Eq, Show)
+                      } deriving (Eq, Show, Read)
 
 askPlayerMove :: Scenario sc => PlayerMovement -> ScenarioState sc -> Either DenyReason ScenarioUpdate
 askPlayerMove dir scs =

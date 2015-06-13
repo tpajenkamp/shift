@@ -13,6 +13,7 @@ import           System.Environment
 
 import Graphics.UI.Gtk
 import Scenario
+import ScenarioController
 import ScenarioParser
 
 testParser :: ByteString -> IO ()
@@ -20,11 +21,11 @@ testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario
                          unless (isRight possiblyParsed) $
                              do guard False
                                 (error . fromLeft) possiblyParsed
-                         let (scenarioState, parseState) = fromRight possiblyParsed
-                         _ <- evaluate scenarioState
+                         let (myScenarioState, myParseState) = fromRight possiblyParsed
+                         _ <- evaluate myScenarioState
                          putStrLn "warnings:"
-                         putStrLn $ (unlines . map show . warnings) parseState
-                         (putStrLn . showScenario . scenario) scenarioState
+                         putStrLn $ (unlines . map show . warnings) myParseState
+                         (putStrLn . showScenario . scenario) myScenarioState
 
 
 main :: IO ()

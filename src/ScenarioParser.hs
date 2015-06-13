@@ -54,7 +54,7 @@ data ParseWarning = ObjectTargetMismatch Int Int
                   | NoTarget
                   | MultiplePlayerTokens
                   | ScenarioEmpty
-                  deriving (Eq, Show)
+                  deriving (Eq, Show, Read)
 
 data ParseState = ParseState
                 { linesReverse :: [Vector Feature]
@@ -64,7 +64,7 @@ data ParseState = ParseState
                 , freeTargets  :: Int
                 , objectCount  :: Int
                 , warnings     :: [ParseWarning]
-                } deriving (Eq, Show)
+                } deriving (Eq, Show, Read)
 
 initParseState :: ParseState
 initParseState = ParseState [] 0 Nothing  0 0 0 []
