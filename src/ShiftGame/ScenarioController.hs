@@ -1,12 +1,24 @@
-{-# LANGUAGE ExistentialQuantification #-}
+-----------------------------------------------------------------------------
+--
+-- Module      :  ShiftGame.ScenarioParser
+-- Copyright   :  (c) 2015, Thomas Pajenkamp
+-- License     :  BSD3
+--
+-- Maintainer  :  tpajenka
+-- Stability   :
+-- Portability :
+--
+-- | Controller for communication between view and game model
+--
+-----------------------------------------------------------------------------
 
-module ScenarioController where
+module ShiftGame.ScenarioController where
 
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State.Lazy
 
-import Scenario
+import ShiftGame.Scenario
 
 -- | A listener that can be informed about @ScenarioUpdate@s.
 newtype UpdateListener sc = UpdateListener { notifyUpdate :: ScenarioUpdate -> ReaderT (ScenarioState sc) IO () }

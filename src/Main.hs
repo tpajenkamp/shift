@@ -1,3 +1,17 @@
+-----------------------------------------------------------------------------
+--
+-- Module      :  ShiftGame.Main
+-- Copyright   :  (c) 2015, Thomas Pajenkamp
+-- License     :  BSD3
+--
+-- Maintainer  :  tpajenka
+-- Stability   :
+-- Portability :
+--
+-- | Entry point for setting up the game
+--
+-----------------------------------------------------------------------------
+
 module Main where
 
 --import           Control.DeepSeq
@@ -9,15 +23,15 @@ import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import           Data.Either
 import           Data.Maybe
-import           Helpers
+import           Graphics.UI.Gtk
 import           System.Environment
 
-import Graphics.UI.Gtk
 
-import GTKScenarioView
-import Scenario
-import ScenarioController
-import ScenarioParser
+import ShiftGame.Helpers
+import ShiftGame.GTKScenarioView
+import ShiftGame.Scenario
+import ShiftGame.ScenarioController
+import ShiftGame.ScenarioParser
 
 testParser :: ByteString -> IO (ScenarioState MatrixScenario)
 testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario initParseState) levelRaw

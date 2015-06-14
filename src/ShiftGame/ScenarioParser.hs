@@ -1,18 +1,18 @@
 -----------------------------------------------------------------------------
 --
--- Module      :  ScenarioParser
--- Copyright   :
--- License     :  AllRightsReserved
+-- Module      :  ShiftGame.ScenarioParser
+-- Copyright   :  (c) 2015, Thomas Pajenkamp
+-- License     :  BSD3
 --
--- Maintainer  :  tpajenka@foo
+-- Maintainer  :  tpajenka
 -- Stability   :
 -- Portability :
 --
--- |
+-- | Parser for level files
 --
 -----------------------------------------------------------------------------
 
-module ScenarioParser (
+module ShiftGame.ScenarioParser (
 parseScenario, ParseState(..), ParseWarning(..), initParseState
 ) where
 
@@ -31,7 +31,7 @@ import           Data.Maybe (fromMaybe, isNothing)
 import           Data.Vector as V (Vector, (!))
 import qualified Data.Vector as V hiding (Vector, (!))
 
-import Scenario
+import ShiftGame.Scenario
 
 
 

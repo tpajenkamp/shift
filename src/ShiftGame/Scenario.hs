@@ -1,18 +1,18 @@
 -----------------------------------------------------------------------------
 --
--- Module      :  Scenario
--- Copyright   :
--- License     :  AllRightsReserved
+-- Module      :  ShiftGame.Scenario
+-- Copyright   :  (c) 2015, Thomas Pajenkamp
+-- License     :  BSD3
 --
--- Maintainer  :  tpajenka@foo
+-- Maintainer  :  tpajenka
 -- Stability   :
 -- Portability :
 --
--- |
+-- | Game data and model
 --
 -----------------------------------------------------------------------------
 
-module Scenario where
+module ShiftGame.Scenario where
 
 import           Control.Monad
 import           Data.Array
@@ -20,7 +20,7 @@ import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B hiding(ByteString)
 import           Data.Maybe
 
---import Helpers
+--import ShiftGame.Helpers
 
 -- | @Features@ are the doodads that can be placed in a scenario.
 data Feature = Wall    -- ^ static wall
