@@ -18,6 +18,7 @@ module Main where
 import           Control.Exception.Base
 import           Control.Monad
 import           Control.Monad.Trans.Class
+import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
 import           Data.Attoparsec.ByteString.Char8 (parse, parseOnly)
 import           Data.ByteString.Char8 (ByteString)
@@ -74,9 +75,9 @@ main = do
    -- widget key focus, key event, link with controller
    widgetSetCanFocus textArea True
    let lst = createTextViewLink textBuffer :: UpdateListener IO MatrixScenario
-   settingsRef <- newIORef (initSettings, initController scenState lst)
+   ctrl <- initController scenState lst
+   settingsRef <- newIORef (initSettings, ctrl)
    _ <- textArea `on` keyPressEvent $ keyboardHandler settingsRef 
-   _ <- runStateT (handleController lst) (initControllerState scenState)
    -- finalize window
    set window [ containerChild := textArea]
    _ <- window `on` deleteEvent $ lift mainQuit >> return False
@@ -90,13 +91,5 @@ initSettings = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["
                                , keysDown  = map (keyFromName . stringToGlib) ["Down"]   -- Down arrow key
                                }
 
-initController :: Scenario sc => ScenarioState sc -> UpdateListener IO sc -> ControllerState IO sc
-initController sc lst = addListener (initControllerState sc) lst
-
-handleController :: Scenario sc => UpdateListener IO sc -> StateT (ControllerState IO sc) IO ()
-handleController lst = do addListenerM lst
-                          tryMove <- runPlayerMove MRight
-                          when (isJust tryMove) $
-                               (lift . putStrLn . show . fromJust) tryMove
-                          return ()
-
+initController :: Scenario sc => ScenarioState sc -> UpdateListener IO sc -> IO (ControllerState IO sc)
+initController sc lst = fmap snd $ runStateT (addListenerM lst) (initControllerState sc)
