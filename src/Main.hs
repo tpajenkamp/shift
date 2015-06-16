@@ -16,8 +16,8 @@ module Main where
 
 --import           Control.DeepSeq
 import           Control.Exception.Base
+import           Control.Monad.Trans.Class
 import           Control.Monad.State.Lazy
---import           Control.Monad.Trans(liftIO)
 import           Data.Attoparsec.ByteString.Char8 (parse, parseOnly)
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
@@ -75,7 +75,7 @@ main = do
                                          liftIO $ putStrLn ("key pressed: " ++ glibToString myKey)
                                          return True
    -- link text buffer to ScenarioController
-   let lst = createTextViewLink textBuffer :: UpdateListener MatrixScenario
+   let lst = createTextViewLink textBuffer :: UpdateListener IO MatrixScenario
    runStateT (handleController lst) (initControllerState scenState)
    return ()
    -- finalize window
@@ -84,10 +84,10 @@ main = do
    widgetShowAll window
    mainGUI
 
-handleController :: Scenario sc => UpdateListener sc -> StateT (ControllerState sc) IO ()
+handleController :: Scenario sc => UpdateListener IO sc -> StateT (ControllerState IO sc) IO ()
 handleController lst = do addListener lst
                           tryMove <- runPlayerMove MRight
                           when (isJust tryMove) $
-                               (liftIO . putStrLn . show . fromJust) tryMove
+                               (lift . putStrLn . show . fromJust) tryMove
                           return ()
 
