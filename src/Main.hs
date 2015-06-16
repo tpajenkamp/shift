@@ -85,10 +85,10 @@ main = do
    mainGUI
 
 initSettings :: ControlSettings
-initSettings = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left"]   -- Left arrow key
-                               , keysRight = map (keyFromName . stringToGlib) ["Right"]  -- Right arrow key
-                               , keysUp    = map (keyFromName . stringToGlib) ["Up"]     -- Up arrow key
-                               , keysDown  = map (keyFromName . stringToGlib) ["Down"]   -- Down arrow key
+initSettings = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]   -- Left arrow key
+                               , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]  -- Right arrow key
+                               , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]     -- Up arrow key
+                               , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]   -- Down arrow key
                                }
 
 initController :: Scenario sc => ScenarioState sc -> UpdateListener IO sc -> IO (ControllerState IO sc)
