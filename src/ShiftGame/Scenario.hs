@@ -68,6 +68,7 @@ combineFeatures Target  _       = (Target,   0)
 combineFeatures TargetX Object  = (TargetX,  0)
 combineFeatures TargetX TargetX = (TargetX,  0)
 combineFeatures TargetX _       = (Target,   1)
+combineFeatures _       TargetX = (Object,   0)
 combineFeatures _       new     = (new,      0)
 
 -- | Scenario coordinates @(x, y)@.
@@ -133,7 +134,7 @@ showFeature Wall    = '#'
 showFeature Floor   = ' '
 showFeature Object  = '$'
 showFeature Target  = '.'
-showFeature TargetX = '+'
+showFeature TargetX = '*'
 
 combinePlayerAndFeature :: Feature -> Char
 combinePlayerAndFeature Target =  '+'    -- Target
