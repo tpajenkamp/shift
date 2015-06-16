@@ -38,8 +38,12 @@ initControllerState :: Monad m => ScenarioState sc -> ControllerState m sc
 initControllerState sc = ControllerState sc []
 
 -- | Adds a listener to be notified about a changed scenario.
-addListener :: Monad m => UpdateListener m sc -> StateT (ControllerState m sc) m ()
-addListener l = do modify (\cs -> cs { listeners = l : listeners cs })
+addListenerM :: Monad m => UpdateListener m sc -> StateT (ControllerState m sc) m ()
+addListenerM l = do modify (\cs -> cs { listeners = l : listeners cs })
+
+-- | Adds a listener to be notified about a changed scenario.
+addListener :: Monad m => ControllerState m sc -> UpdateListener m sc -> ControllerState m sc
+addListener cs l = cs { listeners = l : listeners cs }
 
 -- | Tries to move the player into the specified direction.
 --   Notifies all registered listeners on success and returns 'Nothing'.

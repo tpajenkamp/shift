@@ -16,12 +16,14 @@ module Main where
 
 --import           Control.DeepSeq
 import           Control.Exception.Base
+import           Control.Monad
 import           Control.Monad.Trans.Class
-import           Control.Monad.State.Lazy
+import           Control.Monad.Trans.State.Lazy
 import           Data.Attoparsec.ByteString.Char8 (parse, parseOnly)
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import           Data.Either
+import           Data.IORef
 import           Data.Maybe
 import           Graphics.UI.Gtk
 import           System.Environment
@@ -56,7 +58,7 @@ main = do
                      then "level.txt"
                      else head args
    levelRaw <- B.readFile levelPath
-   scenState <- testParser levelRaw
+   scenState <- testParser levelRaw :: IO (ScenarioState MatrixScenario)
    -- initialize window
    _ <- initGUI
    window <- windowNew
@@ -69,23 +71,30 @@ main = do
    widgetModifyFont textArea $ Just monoFnt -- set monospaced font
    textBuffer <- textViewGetBuffer textArea
    textBufferSetByteString textBuffer (B.pack "Hallo Welt!")
-   -- widget key focus, key event
+   -- widget key focus, key event, link with controller
    widgetSetCanFocus textArea True
-   _ <- textArea `on` keyPressEvent $ do myKey <- eventKeyName 
-                                         liftIO $ putStrLn ("key pressed: " ++ glibToString myKey)
-                                         return True
-   -- link text buffer to ScenarioController
    let lst = createTextViewLink textBuffer :: UpdateListener IO MatrixScenario
-   runStateT (handleController lst) (initControllerState scenState)
-   return ()
+   settingsRef <- newIORef (initSettings, initController scenState lst)
+   _ <- textArea `on` keyPressEvent $ keyboardHandler settingsRef 
+   _ <- runStateT (handleController lst) (initControllerState scenState)
    -- finalize window
    set window [ containerChild := textArea]
-   _ <- window `on` deleteEvent $ liftIO mainQuit >> return False
+   _ <- window `on` deleteEvent $ lift mainQuit >> return False
    widgetShowAll window
    mainGUI
 
+initSettings :: ControlSettings
+initSettings = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left"]   -- Left arrow key
+                               , keysRight = map (keyFromName . stringToGlib) ["Right"]  -- Right arrow key
+                               , keysUp    = map (keyFromName . stringToGlib) ["Up"]     -- Up arrow key
+                               , keysDown  = map (keyFromName . stringToGlib) ["Down"]   -- Down arrow key
+                               }
+
+initController :: Scenario sc => ScenarioState sc -> UpdateListener IO sc -> ControllerState IO sc
+initController sc lst = addListener (initControllerState sc) lst
+
 handleController :: Scenario sc => UpdateListener IO sc -> StateT (ControllerState IO sc) IO ()
-handleController lst = do addListener lst
+handleController lst = do addListenerM lst
                           tryMove <- runPlayerMove MRight
                           when (isJust tryMove) $
                                (lift . putStrLn . show . fromJust) tryMove
