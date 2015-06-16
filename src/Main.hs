@@ -25,6 +25,7 @@ import           Data.Either
 import           Data.Maybe
 import           Graphics.UI.Gtk
 import           System.Environment
+import           System.Glib.UTFString
 
 
 import ShiftGame.Helpers
@@ -68,6 +69,11 @@ main = do
    widgetModifyFont textArea $ Just monoFnt -- set monospaced font
    textBuffer <- textViewGetBuffer textArea
    textBufferSetByteString textBuffer (B.pack "Hallo Welt!")
+   -- widget key focus, key event
+   widgetSetCanFocus textArea True
+   _ <- textArea `on` keyPressEvent $ do myKey <- eventKeyName 
+                                         liftIO $ putStrLn ("key pressed: " ++ glibToString myKey)
+                                         return True
    -- link text buffer to ScenarioController
    let lst = createTextViewLink textBuffer :: UpdateListener MatrixScenario
    runStateT (handleController lst) (initControllerState scenState)
