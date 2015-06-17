@@ -63,7 +63,7 @@ combineFeatures :: Feature        -- ^ previous @Feature@
                 -> Feature        -- ^ new @Feature@
                 -> (Feature, Int) -- ^ the combined @Feature@ and the change of unoccupied targets
 combineFeatures Target  Object  = (TargetX, -1)
-combineFeatures Target  TargetX = (TargetX,  0)
+combineFeatures Target  TargetX = (TargetX, -1)
 combineFeatures Target  _       = (Target,   0)
 combineFeatures TargetX Object  = (TargetX,  0)
 combineFeatures TargetX TargetX = (TargetX,  0)

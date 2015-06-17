@@ -45,7 +45,7 @@ testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario
                          _ <- evaluate myScenarioState
                          putStrLn "warnings:"
                          putStrLn $ (unlines . map show . warnings) myParseState
-                         putStrLn $ "player: " ++ (show . playerCoord) myScenarioState
+                         putStrLn $ "player: " ++ (show . playerCoord) myScenarioState ++ " empty targets: " ++ (show . emptyTargets) myScenarioState
                          (B.putStrLn . flip showScenarioWithPlayer (playerCoord myScenarioState) . scenario) myScenarioState
                          return myScenarioState
 
