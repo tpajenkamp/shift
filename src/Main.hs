@@ -18,7 +18,6 @@ module Main where
 import           Control.Exception.Base
 import           Control.Monad
 import           Control.Monad.Trans.Class
-import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
 import           Data.Attoparsec.ByteString.Char8 (parse, parseOnly)
 import           Data.ByteString.Char8 (ByteString)
@@ -91,5 +90,5 @@ initSettings = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["
                                , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]   -- Down arrow key
                                }
 
-initController :: Scenario sc => ScenarioState sc -> UpdateListener IO sc -> IO (ControllerState IO sc)
+initController :: (Functor m, Scenario sc, ScenarioController ctrl sc m) => ScenarioState sc -> UpdateListener m sc -> m ctrl
 initController sc lst = fmap snd $ runStateT (addListenerM lst) (initControllerState sc)

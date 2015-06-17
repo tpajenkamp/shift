@@ -45,12 +45,12 @@ textViewCreateFunction tBuffer = do scState <- ask -- todo: player position
                                     (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
 
 textViewWinFunction :: TextBuffer -> ReaderT (ScenarioState MatrixScenario) IO ()
-textViewWinFunction tBuffer = do lift $ putStrLn "you win!"
+textViewWinFunction _ = do lift $ putStrLn "you win!"
 
 
 -- implementation detaiol: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
 -- that is the reason why an IORef is used.
-
+-- | Processes keyboard events and determines the resulting player action.
 keyboardHandler :: Scenario sc => IORef (ControlSettings, ControllerState IO sc) -> EventM EKey Bool
 keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                          keyV <- eventKeyVal

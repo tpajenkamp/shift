@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, KindSignatures, FlexibleInstances, InstanceSigs #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.ScenarioParser
@@ -27,8 +28,21 @@ data UpdateListener m sc = UpdateListener { notifyUpdate :: ScenarioUpdate -> Re
                                           , notifyWin    :: ReaderT (ScenarioState sc) m ()
                                           }
 
+
+class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl -> sc m where
+    -- | Initial controller state with the given scenario and without any listeners.
+    initControllerState :: ScenarioState sc -> ctrl
+    -- | Tries to move the player into the specified direction.
+    --   Notifies all registered listeners on success and returns 'Nothing'.
+    --   If the move is not possible returns the reason.
+    runPlayerMove :: PlayerMovement -> StateT ctrl m (Maybe DenyReason)
+    -- | Adds a listener to be notified about a changed scenario.
+    --   The added listener is immediately informed about the current scenario state.
+    addListenerM :: UpdateListener m sc -> StateT ctrl m ()
+
+
 -- | The state of a controller handling communication between model and view
-data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc     -- ^ the game state
+data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc       -- ^ the game state
                                             , listeners     :: [UpdateListener m sc]  -- ^ all known listeners
                                             }
 
@@ -37,34 +51,27 @@ instance Show sc => Show (ControllerState m sc) where
     show (ControllerState scen lst) = "ControllerState {scenarioState = " ++ show scen ++ ", listeners = (" ++ (show . length) lst ++ "listeners )}"
 
 
--- | Initial controller state with the given scenario and without any liseners.
-initControllerState :: Monad m => ScenarioState sc -> ControllerState m sc
-initControllerState sc = ControllerState sc []
+-- todo: not working, m and sc need to be derived from ctrl
+-- otherwise it is required to work with EVERY monad and scenario type
+instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc m where
+    initControllerState :: ScenarioState sc -> ControllerState m sc
+    initControllerState = flip ControllerState []
+    runPlayerMove move = do cs <- get
+                            let s = scenarioState cs
+                            case askPlayerMove s move of
+                                 (Left reason) -> (return . Just) reason -- propagate reason for invalid move
+                                 (Right update) -> do -- update internal ScenarioState
+                                                      let s' = updateScenario s update
+                                                      put $ cs { scenarioState = s' }
+                                                      cs' <- get
+                                                      -- inform all listeners about change
+                                                      lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate update) (listeners cs')
+                                                      -- test winning condition
+                                                      when (isWinningState s') $
+                                                          lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . notifyWin) (listeners cs')
+                                                      return Nothing
+    addListenerM l = do modify (\cs -> cs { listeners = l : listeners cs })
+                        cs <- get
+                        lift $ runReaderT (notifyNew l) (scenarioState cs)
+                        return ()
 
--- | Adds a listener to be notified about a changed scenario.
---   The added listener is immediately informed about the current scenario state.
-addListenerM :: Monad m => UpdateListener m sc -> StateT (ControllerState m sc) m ()
-addListenerM l = do modify (\cs -> cs { listeners = l : listeners cs })
-                    cs <- get
-                    lift $ runReaderT (notifyNew l) (scenarioState cs)
-                    return ()
-
-
--- | Tries to move the player into the specified direction.
---   Notifies all registered listeners on success and returns 'Nothing'.
---   If the move is not possible returns the reason.
-runPlayerMove :: (Monad m, Scenario sc) => PlayerMovement -> StateT (ControllerState m sc) m (Maybe DenyReason)
-runPlayerMove move = do cs <- get
-                        let s = scenarioState cs
-                        case askPlayerMove s move of
-                             (Left reason) -> (return . Just) reason -- propagate reason for invalid move
-                             (Right update) -> do -- update internal ScenarioState
-                                                  let s' = updateScenario s update
-                                                  put $ cs { scenarioState = s' }
-                                                  cs' <- get
-                                                  -- inform all listeners about change
-                                                  lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate update) (listeners cs')
-                                                  -- test winning condition
-                                                  when (isWinningState s') $
-                                                      lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . notifyWin) (listeners cs')
-                                                  return Nothing
