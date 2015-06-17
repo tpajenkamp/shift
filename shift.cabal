@@ -12,7 +12,7 @@ data-dir: ""
 extra-source-files: README.md
  
 executable shift
-    build-depends: base >=4.7 && <4.8, gtk3 >=0.13, glib -any, array -any,
+    build-depends: base >=4.7 && <4.9, gtk3 >=0.13, glib -any, array -any,
                    mtl -any, transformers -any, vector -any,
                    attoparsec -any, bytestring -any, deepseq -any
     main-is: Main.hs
