@@ -14,6 +14,7 @@
 
 module ShiftGame.GTKScenarioView where
 
+import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
@@ -28,6 +29,7 @@ data ControlSettings = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (alter
                                        , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
                                        , keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
                                        , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
+                                       , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
                                        } deriving (Eq, Show, Read)
 
 
@@ -54,21 +56,25 @@ textViewWinFunction _ = do lift $ putStrLn "you win!"
 keyboardHandler :: Scenario sc => IORef (ControlSettings, ControllerState IO sc) -> EventM EKey Bool
 keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                          keyV <- eventKeyVal
-                         let mbPlayerAction = if keyV `elem` keysLeft ctrlSettings  then Just MLeft
-                                         else if keyV `elem` keysRight ctrlSettings then Just MRight
-                                         else if keyV `elem` keysUp ctrlSettings    then Just MUp
-                                         else if keyV `elem` keysDown ctrlSettings  then Just MDown
-                                         else Nothing
-                         -- run controller
-                         case mbPlayerAction of
-                              Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
-                                            return False
-                              Just action -> do (lift . putStrLn . show) action
-                                                (denyReason, newState) <- lift $ runStateT (runPlayerMove action) ctrlState
-                                                case denyReason of
-                                                     Just r -> lift $ putStrLn $ show r                             -- failure
-                                                     Nothing -> (lift . writeIORef ref) (ctrlSettings, newState)    -- success
-                                                return True
+                         -- test to quit game
+                         if (keyV `elem` keysQuit ctrlSettings)
+                         then lift mainQuit >> return True
+                         else do
+                             let mbPlayerAction = if keyV `elem` keysLeft ctrlSettings  then Just MLeft
+                                             else if keyV `elem` keysRight ctrlSettings then Just MRight
+                                             else if keyV `elem` keysUp ctrlSettings    then Just MUp
+                                             else if keyV `elem` keysDown ctrlSettings  then Just MDown
+                                             else Nothing
+                              -- run controller
+                             case mbPlayerAction of
+                                  Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
+                                                return False
+                                  Just action -> do (lift . putStrLn . show) action
+                                                    (denyReason, newState) <- lift $ runStateT (runPlayerMove action) ctrlState
+                                                    case denyReason of
+                                                         Just r -> lift $ putStrLn $ show r                             -- failure
+                                                         Nothing -> (lift . writeIORef ref) (ctrlSettings, newState)    -- success
+                                                    return True
 
 
                          

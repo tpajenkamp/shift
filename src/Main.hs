@@ -88,6 +88,7 @@ initSettings = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["
                                , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]  -- Right arrow key
                                , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]     -- Up arrow key
                                , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]   -- Down arrow key
+                               , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]           -- Esc key
                                }
 
 initController :: (Functor m, Scenario sc, ScenarioController ctrl sc m) => ScenarioState sc -> UpdateListener m sc -> m ctrl
