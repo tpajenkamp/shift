@@ -29,6 +29,18 @@ data UpdateListener m sc = UpdateListener { notifyUpdate :: ScenarioUpdate -> Re
                                           }
 
 
+-- | Cotroller for propagating and executing player commands and linking them to the game logic.
+--   
+--  Class parameters
+--  
+--   * @ctrl@ the controller itself
+--
+--   * @cs@ internal controller state
+--
+--   * @sc@ 'Scenario' instance
+--
+--   * @m@ 'Monad' of related 'UpdateListener'
+--
 class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl -> sc m where
     -- | Initial controller state with the given scenario and without any listeners.
     initControllerState :: ScenarioState sc -> ctrl
@@ -38,8 +50,13 @@ class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl 
     runPlayerMove :: PlayerMovement -> StateT ctrl m (Maybe DenyReason)
     -- | Adds a listener to be notified about a changed scenario.
     --   The added listener is immediately informed about the current scenario state.
-    addListenerM :: UpdateListener m sc -> StateT ctrl m ()
+    addListener :: UpdateListener m sc -> StateT ctrl m ()
+    -- | Borts the current game and sets a new scenario.
+    setScenario :: ScenarioState sc -> StateT ctrl m ()
 
+
+initController :: (Functor m, ScenarioController ctrl sc m) => ScenarioState sc -> UpdateListener m sc -> m ctrl
+initController sc lst = fmap snd $ runStateT (addListener lst) (initControllerState sc)
 
 -- | The state of a controller handling communication between model and view
 data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc       -- ^ the game state
@@ -54,24 +71,27 @@ instance Show sc => Show (ControllerState m sc) where
 -- todo: not working, m and sc need to be derived from ctrl
 -- otherwise it is required to work with EVERY monad and scenario type
 instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc m where
-    initControllerState :: ScenarioState sc -> ControllerState m sc
     initControllerState = flip ControllerState []
     runPlayerMove move = do cs <- get
                             let s = scenarioState cs
                             case askPlayerMove s move of
-                                 (Left reason) -> (return . Just) reason -- propagate reason for invalid move
-                                 (Right update) -> do -- update internal ScenarioState
-                                                      let s' = updateScenario s update
-                                                      put $ cs { scenarioState = s' }
-                                                      cs' <- get
-                                                      -- inform all listeners about change
-                                                      lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate update) (listeners cs')
-                                                      -- test winning condition
-                                                      when (isWinningState s') $
-                                                          lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . notifyWin) (listeners cs')
-                                                      return Nothing
-    addListenerM l = do modify (\cs -> cs { listeners = l : listeners cs })
+                                 (Left reason) -> (return . Just) reason    -- propagate reason for invalid move
+                                 (Right (_, update)) -> do                  -- update internal ScenarioState
+                                     let s' = updateScenario s update
+                                     put $ cs { scenarioState = s' }
+                                     cs' <- get
+                                     -- inform all listeners about change
+                                     lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate update) (listeners cs')
+                                     -- test winning condition
+                                     when (isWinningState s') $
+                                         lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . notifyWin) (listeners cs')
+                                     return Nothing
+    addListener l = do modify (\cs -> cs { listeners = l : listeners cs })
+                       cs <- get
+                       lift $ runReaderT (notifyNew l) (scenarioState cs)
+                       return ()
+    setScenario sc = do modify (\cs -> cs { scenarioState = sc })
                         cs <- get
-                        lift $ runReaderT (notifyNew l) (scenarioState cs)
+                        lift $ sequence_ $ map (flip runReaderT (scenarioState cs) . notifyNew) (listeners cs)
                         return ()
 

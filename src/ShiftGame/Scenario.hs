@@ -33,6 +33,9 @@ data Feature = Wall    -- ^ static wall
 -- | Valid player move directions.
 data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Enum, Show, Read)
 
+-- | Possible movement reactions of the player character.
+data CharacterReaction = RMove | RShift deriving (Eq, Enum, Show, Read)
+
 -- | Reasons why a requested player move can be invalid
 data DenyReason = PathBlocked  -- ^ The target @Feature@ can neither be walked on nor shifted
                 | ShiftBlocked -- ^ The target @Feature@ can be shifted but the after next coordinate is blocked
@@ -191,7 +194,7 @@ data ScenarioUpdate = ScenarioUpdate
 --   @Right 'ScenarioUpdate'@ with the resulting changes otherwise.
 -- === See also
 -- > 'updateScenario'
-askPlayerMove :: Scenario sc => ScenarioState sc -> PlayerMovement -> Either DenyReason ScenarioUpdate
+askPlayerMove :: Scenario sc => ScenarioState sc -> PlayerMovement -> Either DenyReason (CharacterReaction, ScenarioUpdate)
 askPlayerMove scs dir =
     do let sc = scenario scs
            p = playerCoord scs                           -- player coord
@@ -203,17 +206,17 @@ askPlayerMove scs dir =
                      fs = getFeature sc cs               -- shift target feature
                  if walkable ft
                    then -- Move the player onto the target Feature
-                        Right $ ScenarioUpdate { changedFeatures = []
-                                               , newPlayerCoord = tp
-                                               , newEmptyTargets = emptyTargets scs }
+                        Right (RMove, ScenarioUpdate { changedFeatures = []
+                                                     , newPlayerCoord = tp
+                                                     , newEmptyTargets = emptyTargets scs })
                    else -- The target Feature cannot be walked on, but it may be shifted away
                         case (shiftable ft, (not . isNothing) fs && targetable (fromJust fs)) of
-                             (True, True)  -> Right $               -- perform a shift and move the player
+                             (True, True)  -> Right (RShift,        -- perform a shift and move the player
                                   let (ft1, targetChange1) = combineFeatures ft            Floor
                                       (ft2, targetChange2) = combineFeatures (fromJust fs) ft
                                   in ScenarioUpdate { changedFeatures = [(tp, ft1), (cs, ft2)]
                                                     , newPlayerCoord = tp
-                                                    , newEmptyTargets = emptyTargets scs + targetChange1 + targetChange2 }
+                                                    , newEmptyTargets = emptyTargets scs + targetChange1 + targetChange2 })
                              (True, False) -> Left ShiftBlocked     -- Shift target space is blocked
                              _ -> Left PathBlocked                  -- Feature cannot be shifted
          else Left OutsideWorld

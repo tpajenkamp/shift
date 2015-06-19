@@ -74,8 +74,8 @@ main = do
    -- widget key focus, key event, link with controller
    widgetSetCanFocus textArea True
    let lst = createTextViewLink textBuffer :: UpdateListener IO MatrixScenario
-   ctrl <- initController scenState lst
-   settingsRef <- newIORef (initSettings, ctrl)
+   ctrl <- initController scenState lst :: IO (ControllerState IO MatrixScenario)
+   settingsRef <- newIORef (initSettings scenState, ctrl)
    _ <- textArea `on` keyPressEvent $ keyboardHandler settingsRef 
    -- finalize window
    set window [ containerChild := textArea]
@@ -83,13 +83,12 @@ main = do
    widgetShowAll window
    mainGUI
 
-initSettings :: ControlSettings
-initSettings = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]   -- Left arrow key
-                               , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]  -- Right arrow key
-                               , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]     -- Up arrow key
-                               , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]   -- Down arrow key
-                               , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]           -- Esc key
-                               }
-
-initController :: (Functor m, Scenario sc, ScenarioController ctrl sc m) => ScenarioState sc -> UpdateListener m sc -> m ctrl
-initController sc lst = fmap snd $ runStateT (addListenerM lst) (initControllerState sc)
+initSettings :: Scenario sc => ScenarioState sc -> ControlSettings sc
+initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]   -- Left arrow key
+                                 , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]  -- Right arrow key
+                                 , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]     -- Up arrow key
+                                 , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]   -- Down arrow key
+                                 , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]           -- Esc key
+                                 , keysReset = map (keyFromName . stringToGlib) ["r", "R"]           -- Esc key
+                                 , initialScenario = s
+                                 }

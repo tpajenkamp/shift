@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.GTKScenarioView
@@ -25,13 +26,18 @@ import           Graphics.UI.Gtk
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 
-data ControlSettings = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
+data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
                                        , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
                                        , keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
                                        , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
                                        , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
+                                       , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
+                                       , initialScenario :: ScenarioState sc -- ^ currently loaded scenario
                                        } deriving (Eq, Show, Read)
 
+
+setInitialScenario :: Scenario sc => ControlSettings sc -> ScenarioState sc -> ControlSettings sc
+setInitialScenario cs s = cs { initialScenario = s }
 
 createTextViewLink :: TextBuffer -> UpdateListener IO MatrixScenario
 createTextViewLink tBuffer = UpdateListener (textViewUpdateFunction tBuffer) (textViewCreateFunction tBuffer) (textViewWinFunction tBuffer)
@@ -53,12 +59,17 @@ textViewWinFunction _ = do lift $ putStrLn "you win!"
 -- implementation detaiol: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
 -- that is the reason why an IORef is used.
 -- | Processes keyboard events and determines the resulting player action.
-keyboardHandler :: Scenario sc => IORef (ControlSettings, ControllerState IO sc) -> EventM EKey Bool
+keyboardHandler :: (Scenario sc, ScenarioController ctrl sc IO) => IORef (ControlSettings sc, ctrl) -> EventM EKey Bool
 keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                          keyV <- eventKeyVal
                          -- test to quit game
                          if (keyV `elem` keysQuit ctrlSettings)
                          then lift mainQuit >> return True
+                         else if (keyV `elem` keysReset ctrlSettings)
+                         then do (_, newState) <- lift $ runStateT (setScenario (initialScenario ctrlSettings)) ctrlState
+                                 lift $ putStrLn "level reset"
+                                 (lift . writeIORef ref) (ctrlSettings, newState)
+                                 return True
                          else do
                              let mbPlayerAction = if keyV `elem` keysLeft ctrlSettings  then Just MLeft
                                              else if keyV `elem` keysRight ctrlSettings then Just MRight
