@@ -82,7 +82,7 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                             let s = scenarioState cs
                             case askPlayerMove s move of
                                  (Left reason) -> (return . Just) reason    -- propagate reason for invalid move
-                                 (Right (_, update)) -> do                  -- update internal ScenarioState
+                                 (Right update) -> do                  -- update internal ScenarioState
                                      let (Right s') = updateScenario s update
                                      put $ cs { scenarioState = s' }
                                      cs' <- get
@@ -104,12 +104,14 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                     case undo (scenarioState cs) of
                          Left r -> (return . Just) r
                          Right (u, scs) -> do put (cs { scenarioState = scs })
-                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs) . flip notifyUpdate u) (listeners cs)
+                                              cs' <- get
+                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
                                               return Nothing
     redoAction = do cs <- get
                     case redo (scenarioState cs) of
                          Left r -> (return . Just) r
                          Right (u, scs) -> do put (cs { scenarioState = scs })
-                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs) . flip notifyUpdate u) (listeners cs)
+                                              cs' <- get
+                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
                                               return Nothing
 

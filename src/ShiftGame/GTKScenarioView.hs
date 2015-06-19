@@ -73,13 +73,13 @@ keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                                  (lift . writeIORef ref) (ctrlSettings, newState)
                                  return True
                          else if (keyV `elem` keysUndo ctrlSettings)
-                         then do (_, newState) <- lift $ runStateT undoAction ctrlState
-                                 lift $ putStrLn "undo"
+                         then do (err, newState) <- lift $ runStateT undoAction ctrlState
+                                 lift $ putStrLn $ maybe "undo" ((++) "undo: " . show) err
                                  (lift . writeIORef ref) (ctrlSettings, newState)
                                  return True
                          else if (keyV `elem` keysRedo ctrlSettings)
-                         then do (_, newState) <- lift $ runStateT redoAction ctrlState
-                                 lift $ putStrLn "redo"
+                         then do (err, newState) <- lift $ runStateT redoAction ctrlState
+                                 lift $ putStrLn $ maybe "redo" ((++) "redo: " . show) err
                                  (lift . writeIORef ref) (ctrlSettings, newState)
                                  return True   
                          else do
