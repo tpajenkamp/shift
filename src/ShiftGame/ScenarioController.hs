@@ -51,8 +51,14 @@ class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl 
     -- | Adds a listener to be notified about a changed scenario.
     --   The added listener is immediately informed about the current scenario state.
     addListener :: UpdateListener m sc -> StateT ctrl m ()
-    -- | Borts the current game and sets a new scenario.
+    -- | Aborts the current game and sets a new scenario.
     setScenario :: ScenarioState sc -> StateT ctrl m ()
+    -- | Reverts a single step, returns @Nothing@ on success. Optional.
+    undoAction :: StateT ctrl m (Maybe DenyReason)
+    undoAction = return (Just ActionUnsupported)
+    -- | Reverts a single step, returns @Nothing@ on success. Optional.
+    redoAction :: StateT ctrl m (Maybe DenyReason)
+    redoAction = return (Just ActionUnsupported)
 
 
 initController :: (Functor m, ScenarioController ctrl sc m) => ScenarioState sc -> UpdateListener m sc -> m ctrl
@@ -77,7 +83,7 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                             case askPlayerMove s move of
                                  (Left reason) -> (return . Just) reason    -- propagate reason for invalid move
                                  (Right (_, update)) -> do                  -- update internal ScenarioState
-                                     let s' = updateScenario s update
+                                     let (Right s') = updateScenario s update
                                      put $ cs { scenarioState = s' }
                                      cs' <- get
                                      -- inform all listeners about change
@@ -94,4 +100,16 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                         cs <- get
                         lift $ sequence_ $ map (flip runReaderT (scenarioState cs) . notifyNew) (listeners cs)
                         return ()
+    undoAction = do cs <- get
+                    case undo (scenarioState cs) of
+                         Left r -> (return . Just) r
+                         Right (u, scs) -> do put (cs { scenarioState = scs })
+                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs) . flip notifyUpdate u) (listeners cs)
+                                              return Nothing
+    redoAction = do cs <- get
+                    case redo (scenarioState cs) of
+                         Left r -> (return . Just) r
+                         Right (u, scs) -> do put (cs { scenarioState = scs })
+                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs) . flip notifyUpdate u) (listeners cs)
+                                              return Nothing
 

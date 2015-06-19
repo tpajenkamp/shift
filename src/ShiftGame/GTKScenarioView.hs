@@ -32,6 +32,8 @@ data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (al
                                        , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
                                        , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
                                        , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
+                                       , keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
+                                       , keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
                                        , initialScenario :: ScenarioState sc -- ^ currently loaded scenario
                                        } deriving (Eq, Show, Read)
 
@@ -70,6 +72,16 @@ keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                                  lift $ putStrLn "level reset"
                                  (lift . writeIORef ref) (ctrlSettings, newState)
                                  return True
+                         else if (keyV `elem` keysUndo ctrlSettings)
+                         then do (_, newState) <- lift $ runStateT undoAction ctrlState
+                                 lift $ putStrLn "undo"
+                                 (lift . writeIORef ref) (ctrlSettings, newState)
+                                 return True
+                         else if (keyV `elem` keysRedo ctrlSettings)
+                         then do (_, newState) <- lift $ runStateT redoAction ctrlState
+                                 lift $ putStrLn "redo"
+                                 (lift . writeIORef ref) (ctrlSettings, newState)
+                                 return True   
                          else do
                              let mbPlayerAction = if keyV `elem` keysLeft ctrlSettings  then Just MLeft
                                              else if keyV `elem` keysRight ctrlSettings then Just MRight

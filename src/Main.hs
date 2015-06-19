@@ -84,11 +84,13 @@ main = do
    mainGUI
 
 initSettings :: Scenario sc => ScenarioState sc -> ControlSettings sc
-initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]   -- Left arrow key
-                                 , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]  -- Right arrow key
-                                 , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]     -- Up arrow key
-                                 , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]   -- Down arrow key
-                                 , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]           -- Esc key
-                                 , keysReset = map (keyFromName . stringToGlib) ["r", "R"]           -- Esc key
+initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
+                                 , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]
+                                 , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]
+                                 , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]
+                                 , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]
+                                 , keysUndo  = map (keyFromName . stringToGlib) ["minus", "KP_Subtract"]
+                                 , keysRedo  = map (keyFromName . stringToGlib) ["plus", "KP_Add"]
+                                 , keysReset = map (keyFromName . stringToGlib) ["r", "R"]
                                  , initialScenario = s
                                  }

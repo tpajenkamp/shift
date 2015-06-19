@@ -34,12 +34,15 @@ data Feature = Wall    -- ^ static wall
 data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Enum, Show, Read)
 
 -- | Possible movement reactions of the player character.
-data CharacterReaction = RMove | RShift deriving (Eq, Enum, Show, Read)
+data CharacterReaction = RMove PlayerMovement | RShift PlayerMovement deriving (Eq, Show, Read)
 
 -- | Reasons why a requested player move can be invalid
 data DenyReason = PathBlocked  -- ^ The target @Feature@ can neither be walked on nor shifted
                 | ShiftBlocked -- ^ The target @Feature@ can be shifted but the after next coordinate is blocked
                 | OutsideWorld -- ^ The target coordinate resides outside of the scenario
+                | NoAction     -- ^ No available action for undo or redo
+                | ActionUnsupported -- ^ The desired feature is not supported
+                | InvalidMove  -- ^ Generic failure that cannot be represented by the above
                 deriving (Eq, Enum, Show, Read)
 
 -- | @Feature@ can be walked on?
@@ -76,6 +79,17 @@ combineFeatures _       new     = (new,      0)
 
 -- | Scenario coordinates @(x, y)@.
 type Coord = (Int, Int)
+
+direction :: CharacterReaction -> PlayerMovement
+direction (RMove dir) = dir
+direction (RShift dir) = dir
+
+-- | The opposite direction of a movement.
+revertMovement :: PlayerMovement -> PlayerMovement
+revertMovement MLeft   = MRight
+revertMovement MRight = MLeft
+revertMovement MUp    = MDown
+revertMovement MDown  = MUp
 
 -- | Coordinate movement.
 moveCoordinate :: PlayerMovement -- ^ move direction
@@ -173,11 +187,49 @@ data ScenarioState sc = ScenarioState
                         { playerCoord  :: Coord -- ^ current player coordinates
                         , scenario     :: sc    -- ^ current 'Scenario'
                         , emptyTargets :: Int   -- ^ the amount of unoccupied targets within the scenario
+                        , pastMoveStack   :: [CharacterReaction] -- ^ player movements that led to the current state,
+                                                                 --   first element is most recent action
+                        , futureMoveQueue :: [CharacterReaction] -- ^ discarded movements for undone actions,
+                                                                 --   first entry is the follow-up action
                         } deriving (Eq, Show, Read)
+
+-- | Undo the last movement, returns the changed state or 'Nothing' if no previous action is recorded.
+undo :: Scenario sc => ScenarioState sc -> Either DenyReason (ScenarioUpdate, ScenarioState sc)
+undo scs = case pastMoveStack scs of
+    [] -> Left NoAction
+    a:_ -> let backstep = (revertMovement . direction) a
+               playercoord = playerCoord scs
+               backcoord = moveCoordinate backstep playercoord
+           in case a of
+                   (RMove _) -> Right $ ( ScenarioUpdate [] backcoord (emptyTargets scs)
+                                        , scs { playerCoord = backcoord
+                                              , pastMoveStack = (tail . pastMoveStack) scs
+                                              , futureMoveQueue =  a : futureMoveQueue scs
+                                              })
+                   (RShift _) -> do let changes = undefined
+                                        emptyTargets' = undefined
+                                        update = ScenarioUpdate changes backcoord emptyTargets'
+                                    scs' <- updateScenario (scs { pastMoveStack = (tail . pastMoveStack) scs
+                                                                , futureMoveQueue =  a : futureMoveQueue scs
+                                                                }) update
+                                    Right (update, scs')
+
+redo  :: Scenario sc => ScenarioState sc -> Either DenyReason (ScenarioUpdate, ScenarioState sc)
+redo scs = case futureMoveQueue scs of
+                [] -> Left NoAction
+                a:_ -> let dir = direction a
+                       in case askPlayerMove scs dir of
+                               Left r -> Left r
+                               Right (cr, update) -> do
+                                   scs' <- updateScenario (scs { pastMoveStack   = (tail . pastMoveStack) scs
+                                                               , futureMoveQueue = cr : futureMoveQueue scs
+                                                               }) update
+                                   Right (update, scs')
+
 
 -- | Tests if the @Scenario@ of a @ScenarioState@ is finished.
 isWinningState :: ScenarioState sc -> Bool
-isWinningState st = emptyTargets st == 0
+isWinningState scs = emptyTargets scs == 0
 
 -- | A storage for everything that changed within a 'ScenarioState'.
 -- === See also
@@ -206,12 +258,12 @@ askPlayerMove scs dir =
                      fs = getFeature sc cs               -- shift target feature
                  if walkable ft
                    then -- Move the player onto the target Feature
-                        Right (RMove, ScenarioUpdate { changedFeatures = []
-                                                     , newPlayerCoord = tp
-                                                     , newEmptyTargets = emptyTargets scs })
+                        Right (RMove dir, ScenarioUpdate { changedFeatures = []
+                                                        , newPlayerCoord = tp
+                                                        , newEmptyTargets = emptyTargets scs })
                    else -- The target Feature cannot be walked on, but it may be shifted away
                         case (shiftable ft, (not . isNothing) fs && targetable (fromJust fs)) of
-                             (True, True)  -> Right (RShift,        -- perform a shift and move the player
+                             (True, True)  -> Right (RShift dir,        -- perform a shift and move the player
                                   let (ft1, targetChange1) = combineFeatures ft            Floor
                                       (ft2, targetChange2) = combineFeatures (fromJust fs) ft
                                   in ScenarioUpdate { changedFeatures = [(tp, ft1), (cs, ft2)]
@@ -224,18 +276,21 @@ askPlayerMove scs dir =
 
 -- | Performs a @ScenarioUpdate@ on the given @ScenarioState@.
 --   The update is always possible if the @ScenarioUpdate@ has been computed via
---   'askPlayerMove' on the same @ScenarioState@. An error may occur otherwise.
+--   'askPlayerMove' on the same @ScenarioState@.
 -- === See also
 -- > 'askPlayerMove'
-updateScenario :: Scenario sc => ScenarioState sc -> ScenarioUpdate -> ScenarioState sc
-updateScenario scs u = let sc = scenario scs
-  in scs { playerCoord = if isInside sc (newPlayerCoord u)
-                           then newPlayerCoord u
-                           else error $ "Scenario.updateScenario: player outside scenario bounds " ++ show (newPlayerCoord u)
-         , scenario = case foldM (uncurry . setFeature) (scenario scs)  (changedFeatures u) of
-                           Just sc' -> sc'
-                           Nothing  -> error $ "Scenario.updateScenario: invalid update step " ++ show u
-         , emptyTargets = newEmptyTargets u
-         }
+updateScenario :: Scenario sc => ScenarioState sc -> ScenarioUpdate -> Either DenyReason (ScenarioState sc)
+updateScenario scs u = do let sc = scenario scs
+                              pcoord = newPlayerCoord u
+                          nextPlayerCoord <- if isInside sc pcoord
+                                               then Right pcoord
+                                               else Left OutsideWorld
+                          nextScenario <- case foldM (uncurry . setFeature) (scenario scs)  (changedFeatures u) of
+                                               Just sc' -> Right sc'
+                                               Nothing  -> Left InvalidMove
+                          return scs { playerCoord = nextPlayerCoord
+                                     , scenario = nextScenario
+                                     , emptyTargets = newEmptyTargets u
+                                     }
 
 
