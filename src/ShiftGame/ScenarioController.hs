@@ -60,6 +60,11 @@ class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl 
     redoAction :: StateT ctrl m (Maybe DenyReason)
     redoAction = return (Just ActionUnsupported)
 
+controllerSetScenario :: (Scenario sc, Functor m, ScenarioController ctrl sc m) => ctrl -> ScenarioState sc -> m ctrl
+controllerSetScenario ctrl s = (fmap snd) $ runStateT (setScenario s) ctrl
+
+controllerAddListener :: (Scenario sc, Functor m, ScenarioController ctrl sc m) => ctrl -> UpdateListener m sc -> m ctrl
+controllerAddListener ctrl l = (fmap snd) $ runStateT (addListener l) ctrl
 
 initController :: (Functor m, ScenarioController ctrl sc m) => ScenarioState sc -> UpdateListener m sc -> m ctrl
 initController sc lst = fmap snd $ runStateT (addListener lst) (initControllerState sc)
