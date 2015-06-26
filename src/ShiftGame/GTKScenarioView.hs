@@ -19,11 +19,14 @@ import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
+import qualified Data.Array as A
 import qualified Data.ByteString.Char8 as B
 import           Data.IORef
 import qualified Data.Map.Strict as M
-import           Graphics.Rendering.Cairo
-import           Graphics.UI.Gtk hiding (get)
+import           Data.Maybe
+import           Graphics.Rendering.Cairo (liftIO)
+import qualified Graphics.Rendering.Cairo as Cairo
+import           Graphics.UI.Gtk hiding (get, rectangle)
 import           System.Directory (doesFileExist, getDirectoryContents)
 import           System.FilePath (takeFileName, dropExtensions, pathSeparator)
 import           Text.Read (readMaybe)
@@ -72,58 +75,76 @@ textViewWinFunction _ = do lift $ putStrLn "you win!"
 Graphics View
 -}
 
-type ImagePool = M.Map Feature Surface
+type ImagePool = M.Map Feature Cairo.Surface
 
 loadImagePool :: FilePath -> IO ImagePool
 loadImagePool parent = do
     content <- getDirectoryContents parent
-    let dict = M.empty :: M.Map Feature Surface
+    let dict = M.empty :: M.Map Feature Cairo.Surface
         contentWithPath = map (\f -> parent ++ pathSeparator:f) content
     join $ fmap (foldM addIfFeature dict) (filterM doesFileExist contentWithPath)
-  where addIfFeature :: M.Map Feature Surface -> FilePath -> IO (M.Map Feature Surface)
+  where addIfFeature :: M.Map Feature Cairo.Surface -> FilePath -> IO (M.Map Feature Cairo.Surface)
         addIfFeature m path = do
             let fileName = (takeFileName . dropExtensions) path
             case readMaybe fileName :: Maybe Feature of
                  Nothing -> return m
                  Just f -> do
-                     s <- imageSurfaceCreateFromPNG path
+                     s <- Cairo.imageSurfaceCreateFromPNG path
                      return $ M.insert f s m
 
 
-fullScenarioRenderer :: ImagePool -> IORef Surface -> Render ()
+fullScenarioRenderer :: ImagePool -> IORef Cairo.Surface -> Cairo.Render ()
 fullScenarioRenderer imgs mapSurfaceRef = do
     mapSurface <- liftIO $ readIORef mapSurfaceRef
-    setSourceSurface mapSurface 0 0 >> paint
-    {-
-    case M.lookup Floor imgs of
-         Just sfc -> setSourceSurface sfc 0 0 >> paint
-         Nothing -> return ()
-    -}
+    Cairo.setSourceSurface mapSurface 0 0
+    Cairo.paint
 
-drawScenario :: ImagePool -> Surface -> ScenarioState MatrixScenario -> IO ()
-drawScenario imgs target scs = do
-    case M.lookup Floor imgs of
-         Just sfc -> renderWith target (setSourceSurface sfc 0 0 >> paint)
-         Nothing -> return ()
+-- todo: UpdateListener as class
+
+scenarioRender :: ImagePool -> ScenarioState MatrixScenario -> Cairo.Render ()
+scenarioRender imgs scs = do
+    -- paint magent rectangle for invalid textures
+    (cx1, cy1, cx2, cy2) <- Cairo.clipExtents
+    Cairo.rectangle cx1 cy1 cx2 cy2
+    Cairo.setSourceRGB 1.0 0.0 1.0
+    Cairo.fill
+    -- paint images
+    let mat = (matrix . scenario) scs
+        ((lx,ly), (hx, hy)) = A.bounds mat
+    sequence_ $ map drawFeature [(x, y) | x <- [lx..hx], y <- [ly..hy]]
+  where drawFeature :: (Int, Int) -> Cairo.Render ()
+        drawFeature c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) imgs of
+            Just sfc -> let xc = (fromIntegral x) * 48
+                            yc = (fromIntegral y) * 48
+                         in Cairo.setSourceSurface sfc xc yc >> Cairo.paint
+            Nothing -> return ()
+
+drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
+drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 
 createCanvasViewLink :: ImagePool -> DrawingArea -> IO (UpdateListener IO MatrixScenario)
 createCanvasViewLink imgs drawin = do
-    scenSurface <- createImageSurface FormatARGB32 48 48
+    scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 384 384
     scenRef <- newIORef scenSurface
     drawin `on` draw $ fullScenarioRenderer imgs scenRef
-    return $ UpdateListener (canvasViewUpdateFunction imgs scenRef) (canvasViewCreateFunction imgs scenRef) (canvasViewWinFunction imgs scenRef)
+    return $ UpdateListener (canvasViewUpdateFunction imgs drawin scenRef) (canvasViewCreateFunction imgs drawin scenRef) (canvasViewWinFunction imgs drawin scenRef)
 
-canvasViewUpdateFunction :: ImagePool -> IORef Surface -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
-canvasViewUpdateFunction imgs scenRef _ = return ()
-
-canvasViewCreateFunction :: ImagePool -> IORef Surface -> ReaderT (ScenarioState MatrixScenario) IO ()
-canvasViewCreateFunction imgs scenRef = do
+canvasViewUpdateFunction :: ImagePool -> DrawingArea -> IORef Cairo.Surface -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
+canvasViewUpdateFunction imgs widget scenRef _ = do
     scen <- lift $ readIORef scenRef
     scs <- ask
     lift $ drawScenario imgs scen scs
+    lift $ widgetQueueDraw widget
 
-canvasViewWinFunction :: ImagePool -> IORef Surface-> ReaderT (ScenarioState MatrixScenario) IO ()
-canvasViewWinFunction imgs scenRef = do lift $ putStrLn "you win!"
+canvasViewCreateFunction :: ImagePool -> DrawingArea -> IORef Cairo.Surface -> ReaderT (ScenarioState MatrixScenario) IO ()
+canvasViewCreateFunction imgs widget scenRef = do
+    scen <- lift $ readIORef scenRef
+    scs <- ask
+    lift $ drawScenario imgs scen scs
+    lift $ widgetQueueDraw widget
+
+canvasViewWinFunction :: ImagePool -> DrawingArea -> IORef Cairo.Surface-> ReaderT (ScenarioState MatrixScenario) IO ()
+canvasViewWinFunction imgs widget scenRef = do lift $ putStrLn "you win!"
 
 {-
 Keyboard Listener
