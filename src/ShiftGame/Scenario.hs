@@ -28,7 +28,7 @@ data Feature = Wall    -- ^ static wall
              | Object  -- ^ object that can be moved around
              | Target  -- ^ target where objects should be shifted on
              | TargetX -- ^ target occupied by an object
-             deriving (Eq, Enum, Show, Read)
+             deriving (Eq, Enum, Ord, Show, Read)
 
 -- | Valid player move directions.
 data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Enum, Show, Read)

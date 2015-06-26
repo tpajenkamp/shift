@@ -21,7 +21,12 @@ import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
 import qualified Data.ByteString.Char8 as B
 import           Data.IORef
-import           Graphics.UI.Gtk
+import qualified Data.Map.Strict as M
+import           Graphics.Rendering.Cairo
+import           Graphics.UI.Gtk hiding (get)
+import           System.Directory (doesFileExist, getDirectoryContents)
+import           System.FilePath (takeFileName, dropExtensions, pathSeparator)
+import           Text.Read (readMaybe)
 
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
@@ -41,6 +46,11 @@ data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (al
 setInitialScenario :: Scenario sc => ControlSettings sc -> ScenarioState sc -> ControlSettings sc
 setInitialScenario cs s = cs { initialScenario = s }
 
+
+{-
+TextView based view
+-}
+
 createTextViewLink :: TextBuffer -> UpdateListener IO MatrixScenario
 createTextViewLink tBuffer = UpdateListener (textViewUpdateFunction tBuffer) (textViewCreateFunction tBuffer) (textViewWinFunction tBuffer)
 
@@ -57,6 +67,67 @@ textViewCreateFunction tBuffer = do scState <- ask -- todo: player position
 textViewWinFunction :: TextBuffer -> ReaderT (ScenarioState MatrixScenario) IO ()
 textViewWinFunction _ = do lift $ putStrLn "you win!"
 
+
+{-
+Graphics View
+-}
+
+type ImagePool = M.Map Feature Surface
+
+loadImagePool :: FilePath -> IO ImagePool
+loadImagePool parent = do
+    content <- getDirectoryContents parent
+    let dict = M.empty :: M.Map Feature Surface
+        contentWithPath = map (\f -> parent ++ pathSeparator:f) content
+    join $ fmap (foldM addIfFeature dict) (filterM doesFileExist contentWithPath)
+  where addIfFeature :: M.Map Feature Surface -> FilePath -> IO (M.Map Feature Surface)
+        addIfFeature m path = do
+            let fileName = (takeFileName . dropExtensions) path
+            case readMaybe fileName :: Maybe Feature of
+                 Nothing -> return m
+                 Just f -> do
+                     s <- imageSurfaceCreateFromPNG path
+                     return $ M.insert f s m
+
+
+fullScenarioRenderer :: ImagePool -> IORef Surface -> Render ()
+fullScenarioRenderer imgs mapSurfaceRef = do
+    mapSurface <- liftIO $ readIORef mapSurfaceRef
+    setSourceSurface mapSurface 0 0 >> paint
+    {-
+    case M.lookup Floor imgs of
+         Just sfc -> setSourceSurface sfc 0 0 >> paint
+         Nothing -> return ()
+    -}
+
+drawScenario :: ImagePool -> Surface -> ScenarioState MatrixScenario -> IO ()
+drawScenario imgs target scs = do
+    case M.lookup Floor imgs of
+         Just sfc -> renderWith target (setSourceSurface sfc 0 0 >> paint)
+         Nothing -> return ()
+
+createCanvasViewLink :: ImagePool -> DrawingArea -> IO (UpdateListener IO MatrixScenario)
+createCanvasViewLink imgs drawin = do
+    scenSurface <- createImageSurface FormatARGB32 48 48
+    scenRef <- newIORef scenSurface
+    drawin `on` draw $ fullScenarioRenderer imgs scenRef
+    return $ UpdateListener (canvasViewUpdateFunction imgs scenRef) (canvasViewCreateFunction imgs scenRef) (canvasViewWinFunction imgs scenRef)
+
+canvasViewUpdateFunction :: ImagePool -> IORef Surface -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
+canvasViewUpdateFunction imgs scenRef _ = return ()
+
+canvasViewCreateFunction :: ImagePool -> IORef Surface -> ReaderT (ScenarioState MatrixScenario) IO ()
+canvasViewCreateFunction imgs scenRef = do
+    scen <- lift $ readIORef scenRef
+    scs <- ask
+    lift $ drawScenario imgs scen scs
+
+canvasViewWinFunction :: ImagePool -> IORef Surface-> ReaderT (ScenarioState MatrixScenario) IO ()
+canvasViewWinFunction imgs scenRef = do lift $ putStrLn "you win!"
+
+{-
+Keyboard Listener
+-}
 
 -- implementation detaiol: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
 -- that is the reason why an IORef is used.

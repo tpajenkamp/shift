@@ -28,6 +28,7 @@ import           Data.IORef
 import           Data.Maybe
 import           Graphics.UI.Gtk
 import           System.Environment
+import           System.FilePath (pathSeparator)
 import           System.Glib.UTFString
 
 
@@ -75,9 +76,9 @@ main = do
    widgetShowAll window
 
    window2 <- windowNew
-   (textArea2, ctrl2) <- createTextBasedView ctrl
+   (textArea2, ctrl2) <- createGraphicsBasedView ctrl
    widgetSetCanFocus textArea2 True
-   modifyIORef settingsRef (\(s, c) -> (s, ctrl2))
+   modifyIORef settingsRef (\(s, _) -> (s, ctrl2))
    _ <- textArea2 `on` keyPressEvent $ keyboardHandler settingsRef 
    set window2 [ containerChild := textArea2]
    widgetShowAll window2
@@ -97,6 +98,18 @@ createTextBasedView ctrl = do
     let lst = createTextViewLink textBuffer
     ctrl' <- controllerAddListener ctrl lst
     return (textArea, ctrl')
+
+
+createGraphicsBasedView :: ScenarioController ctrl MatrixScenario IO => ctrl -> IO (DrawingArea, ctrl)
+createGraphicsBasedView ctrl = do
+    canvas <- drawingAreaNew
+    widgetModifyBg canvas StateNormal (Color 0xFFFF 0xFFFF 0xFFFF)
+    -- link with controller
+    imgPool <- loadImagePool ("data" ++ pathSeparator:"img")
+    lst <- createCanvasViewLink imgPool canvas
+    ctrl' <- controllerAddListener ctrl lst
+    return (canvas, ctrl')
+
 
 initSettings :: Scenario sc => ScenarioState sc -> ControlSettings sc
 initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
