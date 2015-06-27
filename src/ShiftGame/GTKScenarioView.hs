@@ -22,6 +22,7 @@ import           Control.Monad.Trans.State.Lazy
 import qualified Data.Array as A
 import qualified Data.ByteString.Char8 as B
 import           Data.IORef
+import           Data.List (find)
 import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Graphics.Rendering.Cairo (liftIO)
@@ -75,14 +76,19 @@ textViewWinFunction _ = do lift $ putStrLn "you win!"
 Graphics View
 -}
 
-type ImagePool = M.Map Feature Cairo.Surface
+data ImagePool = ImagePool { featureMap :: M.Map Feature Cairo.Surface -- ^ map containing images for raw features
+                           , playerMap  :: M.Map Feature Cairo.Surface -- ^ map containing images for player onto feature, if special
+                           , playerImg  :: Cairo.Surface               -- ^ player image to draw onto feature if not contained in playerMap
+                           }
 
 loadImagePool :: FilePath -> IO ImagePool
 loadImagePool parent = do
     content <- getDirectoryContents parent
     let dict = M.empty :: M.Map Feature Cairo.Surface
         contentWithPath = map (\f -> parent ++ pathSeparator:f) content
-    join $ fmap (foldM addIfFeature dict) (filterM doesFileExist contentWithPath)
+    ftMap <- join $ fmap (foldM addIfFeature dict) (filterM doesFileExist contentWithPath)
+    pImg <- getPlayerImage content
+    return $ ImagePool ftMap M.empty pImg
   where addIfFeature :: M.Map Feature Cairo.Surface -> FilePath -> IO (M.Map Feature Cairo.Surface)
         addIfFeature m path = do
             let fileName = (takeFileName . dropExtensions) path
@@ -91,6 +97,22 @@ loadImagePool parent = do
                  Just f -> do
                      s <- Cairo.imageSurfaceCreateFromPNG path
                      return $ M.insert f s m
+        getPlayerImage :: [FilePath] -> IO Cairo.Surface
+        getPlayerImage content =
+            case find ((==) "Player" . dropExtensions) content of
+                 Just p -> Cairo.imageSurfaceCreateFromPNG (parent ++ pathSeparator:p)
+                 Nothing -> do
+                     sfc <- Cairo.createImageSurface Cairo.FormatARGB32 48 48
+                     Cairo.renderWith sfc (Cairo.rectangle 0 0 48 48 >>
+                                           Cairo.setSourceRGBA 1.0 0.0 1.0 0.0 >>
+                                           Cairo.fill >>
+                                           Cairo.setSourceRGBA 0.0 1.0 0.0 1.0 >>
+                                           Cairo.setLineWidth 5.0 >>
+                                           Cairo.moveTo 9 9 >>
+                                           Cairo.lineTo 38 38 >>
+                                           Cairo.paint
+                                           )
+                     return sfc
 
 
 fullScenarioRenderer :: ImagePool -> IORef Cairo.Surface -> Cairo.Render ()
@@ -108,23 +130,32 @@ scenarioRender imgs scs = do
     Cairo.rectangle cx1 cy1 cx2 cy2
     Cairo.setSourceRGB 1.0 0.0 1.0
     Cairo.fill
-    -- paint images
-    let mat = (matrix . scenario) scs
-        ((lx,ly), (hx, hy)) = A.bounds mat
-    sequence_ $ map drawFeature [(x, y) | x <- [lx..hx], y <- [ly..hy]]
+    -- paint scenario map
+    let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+    sequence_ $ map drawFeature [(x, y) | x <- [lx..hx], y <- [ly..hy]] -- todo: ix lx or ly /= 0
+    -- paint player
+    drawPlayer (playerCoord scs)
   where drawFeature :: (Int, Int) -> Cairo.Render ()
-        drawFeature c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) imgs of
+        drawFeature c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
             Just sfc -> let xc = (fromIntegral x) * 48
                             yc = (fromIntegral y) * 48
-                         in Cairo.setSourceSurface sfc xc yc >> Cairo.paint
+                        in Cairo.setSourceSurface sfc xc yc >> Cairo.paint
             Nothing -> return ()
+        drawPlayer :: (Int, Int) -> Cairo.Render ()
+        drawPlayer c@(x, y) =
+            let xc = (fromIntegral x) * 48
+                yc = (fromIntegral y) * 48
+            in case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
+                    Just sfc -> Cairo.setSourceSurface sfc xc yc >> Cairo.paint
+                    Nothing -> Cairo.setSourceSurface (playerImg imgs) xc yc >> Cairo.paint
 
 drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
 drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 
-createCanvasViewLink :: ImagePool -> DrawingArea -> IO (UpdateListener IO MatrixScenario)
-createCanvasViewLink imgs drawin = do
-    scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 384 384
+createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO (UpdateListener IO MatrixScenario)
+createCanvasViewLink imgs drawin scs = do
+    let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+    scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 ((hx-lx + 1) * 48) ((hy-ly + 1) * 48)
     scenRef <- newIORef scenSurface
     drawin `on` draw $ fullScenarioRenderer imgs scenRef
     return $ UpdateListener (canvasViewUpdateFunction imgs drawin scenRef) (canvasViewCreateFunction imgs drawin scenRef) (canvasViewWinFunction imgs drawin scenRef)

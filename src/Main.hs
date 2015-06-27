@@ -76,7 +76,7 @@ main = do
    widgetShowAll window
 
    window2 <- windowNew
-   (textArea2, ctrl2) <- createGraphicsBasedView ctrl
+   (textArea2, ctrl2) <- createGraphicsBasedView ctrl scenState
    widgetSetCanFocus textArea2 True
    modifyIORef settingsRef (\(s, _) -> (s, ctrl2))
    _ <- textArea2 `on` keyPressEvent $ keyboardHandler settingsRef 
@@ -100,13 +100,13 @@ createTextBasedView ctrl = do
     return (textArea, ctrl')
 
 
-createGraphicsBasedView :: ScenarioController ctrl MatrixScenario IO => ctrl -> IO (DrawingArea, ctrl)
-createGraphicsBasedView ctrl = do
+createGraphicsBasedView :: ScenarioController ctrl MatrixScenario IO => ctrl -> ScenarioState MatrixScenario -> IO (DrawingArea, ctrl)
+createGraphicsBasedView ctrl scs = do
     canvas <- drawingAreaNew
     widgetModifyBg canvas StateNormal (Color 0xFFFF 0xFFFF 0xFFFF)
     -- link with controller
     imgPool <- loadImagePool ("data" ++ pathSeparator:"img")
-    lst <- createCanvasViewLink imgPool canvas
+    lst <- createCanvasViewLink imgPool canvas scs
     ctrl' <- controllerAddListener ctrl lst
     return (canvas, ctrl')
 
