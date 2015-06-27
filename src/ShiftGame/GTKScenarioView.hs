@@ -107,10 +107,12 @@ loadImagePool parent = do
                                            Cairo.setSourceRGBA 1.0 0.0 1.0 0.0 >>
                                            Cairo.fill >>
                                            Cairo.setSourceRGBA 0.0 1.0 0.0 1.0 >>
-                                           Cairo.setLineWidth 5.0 >>
+                                           Cairo.setLineWidth 7.0 >>
                                            Cairo.moveTo 9 9 >>
                                            Cairo.lineTo 38 38 >>
-                                           Cairo.paint
+                                           Cairo.moveTo 9 38 >>
+                                           Cairo.lineTo 38 9 >>
+                                           Cairo.stroke
                                            )
                      return sfc
 
