@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, MultiParamTypeClasses, InstanceSigs #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.GTKScenarioView
@@ -47,29 +47,36 @@ data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (al
                                        } deriving (Eq, Show, Read)
 
 
-setInitialScenario :: Scenario sc => ControlSettings sc -> ScenarioState sc -> ControlSettings sc
-setInitialScenario cs s = cs { initialScenario = s }
-
 
 {-
 TextView based view
 -}
 
-createTextViewLink :: TextBuffer -> UpdateListener IO MatrixScenario
-createTextViewLink tBuffer = UpdateListener (textViewUpdateFunction tBuffer) (textViewCreateFunction tBuffer) (textViewWinFunction tBuffer)
+data TextViewUpdateListener = TextViewUpdateListener TextBuffer
 
-textViewUpdateFunction :: TextBuffer -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
-textViewUpdateFunction tBuffer _ = do scState <- ask -- todo: player position
-                                      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
-                                      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
+instance UpdateListener TextViewUpdateListener IO MatrixScenario where
+  notifyUpdate :: TextViewUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyUpdate (TextViewUpdateListener tBuffer) _ = do
+      scState <- ask -- todo: player position
+      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
+      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
+  notifyNew :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyNew (TextViewUpdateListener tBuffer) = do
+      scState <- ask -- todo: player position
+      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
+      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
+  notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyWin (TextViewUpdateListener tBuffer) = do lift $ putStrLn "you win!"
 
-textViewCreateFunction :: TextBuffer -> ReaderT (ScenarioState MatrixScenario) IO ()
-textViewCreateFunction tBuffer = do scState <- ask -- todo: player position
-                                    let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
-                                    (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
 
-textViewWinFunction :: TextBuffer -> ReaderT (ScenarioState MatrixScenario) IO ()
-textViewWinFunction _ = do lift $ putStrLn "you win!"
+
+setInitialScenario :: Scenario sc => ControlSettings sc -> ScenarioState sc -> ControlSettings sc
+setInitialScenario cs s = cs { initialScenario = s }
+
+createTextViewLink :: TextBuffer -> TextViewUpdateListener
+createTextViewLink tBuffer = TextViewUpdateListener tBuffer
+
+
 
 
 {-
@@ -80,6 +87,53 @@ data ImagePool = ImagePool { featureMap :: M.Map Feature Cairo.Surface -- ^ map 
                            , playerMap  :: M.Map Feature Cairo.Surface -- ^ map containing images for player onto feature, if special
                            , playerImg  :: Cairo.Surface               -- ^ player image to draw onto feature if not contained in playerMap
                            }
+
+data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool 
+                                                 , drawCanvas     :: DrawingArea
+                                                 , surfaceRef     :: IORef Cairo.Surface
+                                                 }
+
+instance UpdateListener CanvasUpdateListener IO MatrixScenario where
+  --notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyNew (CanvasUpdateListener imgs widget scenRef) = do
+      scen <- lift $ readIORef scenRef
+      scs <- ask
+      -- widgetSetSizeRequest -- todo
+      lift $ drawScenario imgs scen scs
+      lift $ widgetQueueDraw widget
+  notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyWin _ = do lift $ putStrLn "fancy: you win!"
+
+scenarioRender :: ImagePool -> ScenarioState MatrixScenario -> Cairo.Render ()
+scenarioRender imgs scs = do
+    -- paint magent rectangle for invalid textures
+    (cx1, cy1, cx2, cy2) <- Cairo.clipExtents
+    Cairo.rectangle cx1 cy1 cx2 cy2
+    Cairo.setSourceRGB 1.0 0.0 1.0
+    Cairo.fill
+    -- paint scenario map
+    let (l@(lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+    sequence_ $ map (drawFeature l) [(x, y) | x <- [lx..hx], y <- [ly..hy]]
+    -- paint player
+    drawPlayer l (playerCoord scs)
+  where drawFeature :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
+        drawFeature (lx, ly) c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
+            Just sfc -> let xc = (fromIntegral (x - lx)) * 48
+                            yc = (fromIntegral (y - ly)) * 48
+                        in Cairo.setSourceSurface sfc xc yc >> Cairo.paint
+            Nothing -> return ()
+        drawPlayer :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
+        drawPlayer (lx, ly) c@(x, y) =
+            let xc = (fromIntegral (x - lx)) * 48
+                yc = (fromIntegral (y - ly)) * 48
+            in case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
+                    Just sfc -> Cairo.setSourceSurface sfc xc yc >> Cairo.paint
+                    Nothing -> Cairo.setSourceSurface (playerImg imgs) xc yc >> Cairo.paint
+
+drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
+drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
+
 
 loadImagePool :: FilePath -> IO ImagePool
 loadImagePool parent = do
@@ -123,38 +177,8 @@ fullScenarioRenderer imgs mapSurfaceRef = do
     Cairo.setSourceSurface mapSurface 0 0
     Cairo.paint
 
--- todo: UpdateListener as class
 
-scenarioRender :: ImagePool -> ScenarioState MatrixScenario -> Cairo.Render ()
-scenarioRender imgs scs = do
-    -- paint magent rectangle for invalid textures
-    (cx1, cy1, cx2, cy2) <- Cairo.clipExtents
-    Cairo.rectangle cx1 cy1 cx2 cy2
-    Cairo.setSourceRGB 1.0 0.0 1.0
-    Cairo.fill
-    -- paint scenario map
-    let (l@(lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
-    sequence_ $ map (drawFeature l) [(x, y) | x <- [lx..hx], y <- [ly..hy]]
-    -- paint player
-    drawPlayer l (playerCoord scs)
-  where drawFeature :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
-        drawFeature (lx, ly) c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
-            Just sfc -> let xc = (fromIntegral (x - lx)) * 48
-                            yc = (fromIntegral (y - ly)) * 48
-                        in Cairo.setSourceSurface sfc xc yc >> Cairo.paint
-            Nothing -> return ()
-        drawPlayer :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
-        drawPlayer (lx, ly) c@(x, y) =
-            let xc = (fromIntegral (x - lx)) * 48
-                yc = (fromIntegral (y - ly)) * 48
-            in case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
-                    Just sfc -> Cairo.setSourceSurface sfc xc yc >> Cairo.paint
-                    Nothing -> Cairo.setSourceSurface (playerImg imgs) xc yc >> Cairo.paint
-
-drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
-drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
-
-createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO (UpdateListener IO MatrixScenario)
+createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO CanvasUpdateListener
 createCanvasViewLink imgs drawin scs = do
     let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
         xSpan = (hx-lx + 1) * 48
@@ -163,25 +187,8 @@ createCanvasViewLink imgs drawin scs = do
     scenRef <- newIORef scenSurface
     widgetSetSizeRequest drawin xSpan ySpan
     drawin `on` draw $ fullScenarioRenderer imgs scenRef
-    return $ UpdateListener (canvasViewUpdateFunction imgs drawin scenRef) (canvasViewCreateFunction imgs drawin scenRef) (canvasViewWinFunction imgs drawin scenRef)
+    return $ CanvasUpdateListener imgs drawin scenRef
 
-canvasViewUpdateFunction :: ImagePool -> DrawingArea -> IORef Cairo.Surface -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
-canvasViewUpdateFunction imgs widget scenRef _ = do
-    scen <- lift $ readIORef scenRef
-    scs <- ask
-    lift $ drawScenario imgs scen scs
-    lift $ widgetQueueDraw widget
-
-canvasViewCreateFunction :: ImagePool -> DrawingArea -> IORef Cairo.Surface -> ReaderT (ScenarioState MatrixScenario) IO ()
-canvasViewCreateFunction imgs widget scenRef = do
-    scen <- lift $ readIORef scenRef
-    scs <- ask
-    -- widgetSetSizeRequest -- todo
-    lift $ drawScenario imgs scen scs
-    lift $ widgetQueueDraw widget
-
-canvasViewWinFunction :: ImagePool -> DrawingArea -> IORef Cairo.Surface-> ReaderT (ScenarioState MatrixScenario) IO ()
-canvasViewWinFunction imgs widget scenRef = do lift $ putStrLn "you win!"
 
 {-
 Keyboard Listener
