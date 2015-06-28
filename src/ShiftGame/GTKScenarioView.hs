@@ -19,7 +19,6 @@ import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
-import qualified Data.ByteString.Char8 as B
 import           Data.IORef
 import           Graphics.UI.Gtk
 
