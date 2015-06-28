@@ -92,13 +92,28 @@ data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool
                                                  }
 
 instance UpdateListener CanvasUpdateListener IO MatrixScenario where
-  --notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyNew (CanvasUpdateListener imgs widget scenRef) = do
-      scen <- lift $ readIORef scenRef
+  notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyUpdate (CanvasUpdateListener imgs widget sfcRef) _ = do
+      sfc <- lift $ readIORef sfcRef
       scs <- ask
-      -- widgetSetSizeRequest -- todo
-      lift $ drawScenario imgs scen scs
+      lift $ drawScenario imgs sfc scs
+      lift $ widgetQueueDraw widget
+  notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyNew (CanvasUpdateListener imgs widget sfcRef) = do
+      sfc <- lift $ readIORef sfcRef
+      scs <- ask
+      -- create new surface if dimension changed
+      w <- Cairo.imageSurfaceGetWidth sfc
+      h <- Cairo.imageSurfaceGetHeight sfc
+      let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+          xSpan = (hx-lx + 1) * 48
+          ySpan = (hy-ly + 1) * 48
+      when (w /= xSpan || h /= ySpan) $ lift $ do
+          newSfc <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
+          writeIORef sfcRef newSfc
+          widgetSetSizeRequest widget xSpan ySpan
+      -- redraw scenario surface
+      lift $ drawScenario imgs sfc scs
       lift $ widgetQueueDraw widget
   notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
   notifyWin _ = do lift $ putStrLn "fancy: you win!"
