@@ -160,7 +160,7 @@ combinePlayerAndFeature _      =  '@'    -- others are invalid, fall back
 
 -- | Converts a @MatrtixScenario@ into a easily readable string.
 showScenario :: MatrixScenario -> ByteString
-showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (0, 0)
+showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (xl, yl)
   --                                                                 #rows + 1 for line breaks
   where ((xl, yl), (xh, yh)) = bounds mat
         lineLength = xh - xl + 1
@@ -171,7 +171,7 @@ showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) 
           | otherwise   = Just (showFeature (mat!c), (x+1, y))    -- next character in row
 
 showScenarioWithPlayer :: MatrixScenario -> Coord -> ByteString
-showScenarioWithPlayer (MatrixScenario mat) pC = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (0, 0)
+showScenarioWithPlayer (MatrixScenario mat) pC = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (xl, yl)
   --                                                                 #rows + 1 for line breaks
   where ((xl, yl), (xh, yh)) = bounds mat
         lineLength = xh - xl + 1
