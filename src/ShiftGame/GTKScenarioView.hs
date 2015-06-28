@@ -19,8 +19,6 @@ import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
-import qualified Data.Array as A
-import qualified Data.ByteString.Char8 as B
 import           Data.IORef
 import           Data.List (find)
 import qualified Data.Map.Strict as M

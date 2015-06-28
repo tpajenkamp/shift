@@ -20,12 +20,11 @@ import           Control.Exception.Base
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
-import           Data.Attoparsec.ByteString.Char8 (parse, parseOnly)
+import           Data.Attoparsec.ByteString.Char8 (parseOnly)
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import           Data.Either
 import           Data.IORef
-import           Data.Maybe
 import           Graphics.UI.Gtk
 import           System.Environment
 import           System.FilePath (pathSeparator)
