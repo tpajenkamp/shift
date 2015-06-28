@@ -169,8 +169,8 @@ loadImagePool parent = do
                      return sfc
 
 
-fullScenarioRenderer :: ImagePool -> IORef Cairo.Surface -> Cairo.Render ()
-fullScenarioRenderer imgs mapSurfaceRef = do
+copyScenarioToSurface :: ImagePool -> IORef Cairo.Surface -> Cairo.Render ()
+copyScenarioToSurface imgs mapSurfaceRef = do
     mapSurface <- liftIO $ readIORef mapSurfaceRef
     Cairo.setSourceSurface mapSurface 0 0
     Cairo.paint
@@ -184,7 +184,7 @@ createCanvasViewLink imgs drawin scs = do
     scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
     scenRef <- newIORef scenSurface
     widgetSetSizeRequest drawin xSpan ySpan
-    drawin `on` draw $ fullScenarioRenderer imgs scenRef
+    drawin `on` draw $ copyScenarioToSurface imgs scenRef
     return $ CanvasUpdateListener imgs drawin scenRef
 
 
