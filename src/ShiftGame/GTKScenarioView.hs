@@ -133,20 +133,20 @@ scenarioRender imgs scs = do
     Cairo.setSourceRGB 1.0 0.0 1.0
     Cairo.fill
     -- paint scenario map
-    let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
-    sequence_ $ map drawFeature [(x, y) | x <- [lx..hx], y <- [ly..hy]] -- todo: ix lx or ly /= 0
+    let (l@(lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+    sequence_ $ map (drawFeature l) [(x, y) | x <- [lx..hx], y <- [ly..hy]]
     -- paint player
-    drawPlayer (playerCoord scs)
-  where drawFeature :: (Int, Int) -> Cairo.Render ()
-        drawFeature c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
-            Just sfc -> let xc = (fromIntegral x) * 48
-                            yc = (fromIntegral y) * 48
+    drawPlayer l (playerCoord scs)
+  where drawFeature :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
+        drawFeature (lx, ly) c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
+            Just sfc -> let xc = (fromIntegral (x - lx)) * 48
+                            yc = (fromIntegral (y - ly)) * 48
                         in Cairo.setSourceSurface sfc xc yc >> Cairo.paint
             Nothing -> return ()
-        drawPlayer :: (Int, Int) -> Cairo.Render ()
-        drawPlayer c@(x, y) =
-            let xc = (fromIntegral x) * 48
-                yc = (fromIntegral y) * 48
+        drawPlayer :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
+        drawPlayer (lx, ly) c@(x, y) =
+            let xc = (fromIntegral (x - lx)) * 48
+                yc = (fromIntegral (y - ly)) * 48
             in case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
                     Just sfc -> Cairo.setSourceSurface sfc xc yc >> Cairo.paint
                     Nothing -> Cairo.setSourceSurface (playerImg imgs) xc yc >> Cairo.paint
@@ -157,8 +157,11 @@ drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO (UpdateListener IO MatrixScenario)
 createCanvasViewLink imgs drawin scs = do
     let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
-    scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 ((hx-lx + 1) * 48) ((hy-ly + 1) * 48)
+        xSpan = (hx-lx + 1) * 48
+        ySpan = (hy-ly + 1) * 48
+    scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
     scenRef <- newIORef scenSurface
+    widgetSetSizeRequest drawin xSpan ySpan
     drawin `on` draw $ fullScenarioRenderer imgs scenRef
     return $ UpdateListener (canvasViewUpdateFunction imgs drawin scenRef) (canvasViewCreateFunction imgs drawin scenRef) (canvasViewWinFunction imgs drawin scenRef)
 
@@ -173,6 +176,7 @@ canvasViewCreateFunction :: ImagePool -> DrawingArea -> IORef Cairo.Surface -> R
 canvasViewCreateFunction imgs widget scenRef = do
     scen <- lift $ readIORef scenRef
     scs <- ask
+    -- widgetSetSizeRequest -- todo
     lift $ drawScenario imgs scen scs
     lift $ widgetQueueDraw widget
 
