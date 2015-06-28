@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, MultiParamTypeClasses, InstanceSigs #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.GTKScenarioView
@@ -38,24 +38,31 @@ data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (al
                                        } deriving (Eq, Show, Read)
 
 
+data TextViewUpdateListener = TextViewUpdateListener TextBuffer
+
+instance UpdateListener TextViewUpdateListener IO MatrixScenario where
+  notifyUpdate :: TextViewUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyUpdate (TextViewUpdateListener tBuffer) _ = do
+      scState <- ask -- todo: player position
+      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
+      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
+  notifyNew :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyNew (TextViewUpdateListener tBuffer) = do
+      scState <- ask -- todo: player position
+      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
+      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
+  notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
+  notifyWin (TextViewUpdateListener tBuffer) = do lift $ putStrLn "you win!"
+
+
+
 setInitialScenario :: Scenario sc => ControlSettings sc -> ScenarioState sc -> ControlSettings sc
 setInitialScenario cs s = cs { initialScenario = s }
 
-createTextViewLink :: TextBuffer -> UpdateListener IO MatrixScenario
-createTextViewLink tBuffer = UpdateListener (textViewUpdateFunction tBuffer) (textViewCreateFunction tBuffer) (textViewWinFunction tBuffer)
+createTextViewLink :: TextBuffer -> TextViewUpdateListener
+createTextViewLink tBuffer = TextViewUpdateListener tBuffer
 
-textViewUpdateFunction :: TextBuffer -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
-textViewUpdateFunction tBuffer _ = do scState <- ask -- todo: player position
-                                      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
-                                      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
 
-textViewCreateFunction :: TextBuffer -> ReaderT (ScenarioState MatrixScenario) IO ()
-textViewCreateFunction tBuffer = do scState <- ask -- todo: player position
-                                    let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
-                                    (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
-
-textViewWinFunction :: TextBuffer -> ReaderT (ScenarioState MatrixScenario) IO ()
-textViewWinFunction _ = do lift $ putStrLn "you win!"
 
 
 -- implementation detaiol: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader

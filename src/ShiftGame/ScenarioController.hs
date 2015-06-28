@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, KindSignatures, FlexibleInstances, InstanceSigs #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, KindSignatures, FlexibleInstances, InstanceSigs, ExistentialQuantification #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.ScenarioParser
@@ -23,11 +23,19 @@ import Control.Monad.Trans.State.Lazy
 import ShiftGame.Scenario
 
 -- | A listener that can be informed about @ScenarioUpdate@s.
-data UpdateListener m sc = UpdateListener { notifyUpdate :: ScenarioUpdate -> ReaderT (ScenarioState sc) m ()
-                                          , notifyNew    :: ReaderT (ScenarioState sc) m ()
-                                          , notifyWin    :: ReaderT (ScenarioState sc) m ()
-                                          }
+class UpdateListener u m sc | u -> m sc where
+  notifyUpdate :: u -> ScenarioUpdate -> ReaderT (ScenarioState sc) m ()
+  notifyUpdate u _ = notifyNew u
+  notifyNew    :: u -> ReaderT (ScenarioState sc) m ()
+  notifyWin    :: u -> ReaderT (ScenarioState sc) m ()
 
+-- | A wrapper for any 'UpdateListener' data.
+data UpdateListenerType m sc = forall a. UpdateListener a m sc => UpdateListenerType a
+
+instance UpdateListener (UpdateListenerType m sc) m sc where
+  notifyUpdate (UpdateListenerType l) u = notifyUpdate l u
+  notifyNew (UpdateListenerType l) = notifyNew l
+  notifyWin (UpdateListenerType l) = notifyWin l
 
 -- | Cotroller for propagating and executing player commands and linking them to the game logic.
 --   
@@ -50,7 +58,7 @@ class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl 
     runPlayerMove :: PlayerMovement -> StateT ctrl m (Maybe DenyReason)
     -- | Adds a listener to be notified about a changed scenario.
     --   The added listener is immediately informed about the current scenario state.
-    addListener :: UpdateListener m sc -> StateT ctrl m ()
+    addListener :: (Monad m, UpdateListener u m sc) => u -> StateT ctrl m ()
     -- | Aborts the current game and sets a new scenario.
     setScenario :: ScenarioState sc -> StateT ctrl m ()
     -- | Reverts a single step, returns @Nothing@ on success. Optional.
@@ -61,12 +69,12 @@ class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl 
     redoAction = return (Just ActionUnsupported)
 
 
-initController :: (Functor m, ScenarioController ctrl sc m) => ScenarioState sc -> UpdateListener m sc -> m ctrl
+initController :: (Functor m, ScenarioController ctrl sc m, UpdateListener u m sc) => ScenarioState sc -> u -> m ctrl
 initController sc lst = fmap snd $ runStateT (addListener lst) (initControllerState sc)
 
 -- | The state of a controller handling communication between model and view
 data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc       -- ^ the game state
-                                            , listeners     :: [UpdateListener m sc]  -- ^ all known listeners
+                                            , listeners     :: [UpdateListenerType m sc]  -- ^ all known listeners
                                             }
 
 
@@ -92,7 +100,7 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                                      when (isWinningState s') $
                                          lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . notifyWin) (listeners cs')
                                      return Nothing
-    addListener l = do modify (\cs -> cs { listeners = l : listeners cs })
+    addListener l = do modify (\cs -> cs { listeners = UpdateListenerType l : listeners cs })
                        cs <- get
                        lift $ runReaderT (notifyNew l) (scenarioState cs)
                        return ()

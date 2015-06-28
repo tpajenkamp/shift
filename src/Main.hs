@@ -73,7 +73,7 @@ main = do
    textBufferSetByteString textBuffer (B.pack "Hallo Welt!")
    -- widget key focus, key event, link with controller
    widgetSetCanFocus textArea True
-   let lst = createTextViewLink textBuffer :: UpdateListener IO MatrixScenario
+   let lst = createTextViewLink textBuffer
    ctrl <- initController scenState lst :: IO (ControllerState IO MatrixScenario)
    settingsRef <- newIORef (initSettings scenState, ctrl)
    _ <- textArea `on` keyPressEvent $ keyboardHandler settingsRef 
