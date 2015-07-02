@@ -20,15 +20,14 @@ import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
 import           Data.IORef
-import           Data.List (find, partition)
+import           Data.List (partition)
 import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Graphics.Rendering.Cairo (liftIO)
 import qualified Graphics.Rendering.Cairo as Cairo
 import           Graphics.UI.Gtk hiding (get, rectangle)
-import           System.Directory (doesFileExist, getDirectoryContents)
-import           System.FilePath (takeFileName, dropExtensions, pathSeparator)
-import           Text.Read (readMaybe)
+import           System.Directory (doesFileExist)
+import           System.FilePath (pathSeparator)
 
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
@@ -180,12 +179,15 @@ scenarioUpdateRender imgs u (lx, ly) = do
                 ycd = fromIntegral yc
             case M.lookup ft (playerMap imgs) of
                  -- draw combined "Feature+Player" image, if available
-                 Just sfc -> Cairo.setSourceSurface sfc xcd ycd >> Cairo.paint
+                 Just sfc -> do Cairo.setSourceSurface sfc xcd ycd
+                                Cairo.paint
+                                return $ Cairo.RectangleInt xc yc 48 48
                  -- draw raw feature and paint player image on top
-                 Nothing -> do drawFeature item
+                 Nothing -> do rectInt <- drawFeature item
                                Cairo.setSourceSurface (playerImg imgs) xcd ycd
                                Cairo.paint
-            return $ Cairo.RectangleInt xc yc 48 48
+                               return rectInt
+            
 
 drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
 drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
@@ -234,8 +236,8 @@ loadImagePool parent = do
                       return sfc
 
 
-copyScenarioToSurface :: ImagePool -> IORef Cairo.Surface -> Cairo.Render ()
-copyScenarioToSurface imgs mapSurfaceRef = do
+copyScenarioToSurface :: IORef Cairo.Surface -> Cairo.Render ()
+copyScenarioToSurface mapSurfaceRef = do
     mapSurface <- liftIO $ readIORef mapSurfaceRef
     Cairo.setSourceSurface mapSurface 0 0
     Cairo.paint
@@ -250,7 +252,7 @@ createCanvasViewLink imgs drawin scs = do
     scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
     scenRef <- newIORef scenSurface
     widgetSetSizeRequest drawin xSpan ySpan
-    drawin `on` draw $ copyScenarioToSurface imgs scenRef
+    _ <- drawin `on` draw $ copyScenarioToSurface scenRef
     return $ CanvasUpdateListener imgs drawin scenRef (lx, ly)
 
 
