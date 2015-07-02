@@ -199,21 +199,22 @@ undo scs = do
     a <- case pastMoveStack scs of
               [] -> Left NoAction
               a:_ -> return a
-    let dir = direction a
-        backstep = revertMovement dir
-        playercoord = playerCoord scs
-        backcoord = moveCoordinate backstep playercoord
+    let dir = direction a                                -- last performed move direction
+        backstep = revertMovement dir                    -- direction to move to previous direction
+        playercoord = playerCoord scs                    -- current player coordinates
+        backcoord = moveCoordinate backstep playercoord  -- previous player position
         sc = scenario scs
-    plFeature <- case getFeature sc playercoord of
+    plFeature <- case getFeature sc playercoord of       -- feature at player position
                       Just ft -> return ft
                       Nothing -> Left OutsideWorld
-    plFeature' <- case getFeature sc backcoord of
+    plFeature' <- case getFeature sc backcoord of        -- feature at previous player position
                        Just ft -> return ft
                        Nothing -> Left OutsideWorld
     unless (walkable plFeature') $
         Left PathBlocked
     update <- case a of
-                   (RMove _) -> return $ ScenarioUpdate [] backcoord (emptyTargets scs) Nothing
+                   (RMove _) -> return $ ScenarioUpdate [(playercoord, plFeature), (backcoord, plFeature')]
+                                             backcoord (emptyTargets scs) Nothing
                    (RShift _) -> do
                        let backshiftFrom = moveCoordinate dir playercoord
                        backshiftFeature <- case getFeature sc backshiftFrom of
@@ -225,8 +226,8 @@ undo scs = do
                            Left InvalidMove
                        let (newFeatureP, chg)   = combineFeatures plFeature backshiftFeature
                            (newFeatureP', chg') = combineFeatures backshiftFeature Floor
-                       return $ ScenarioUpdate [(playercoord, newFeatureP), (backshiftFrom, newFeatureP')]
-                                               backcoord (emptyTargets scs + chg + chg') Nothing
+                       return $ ScenarioUpdate [(playercoord, newFeatureP), (backcoord, plFeature'), (backshiftFrom, newFeatureP')]
+                                    backcoord (emptyTargets scs + chg + chg') Nothing
     scs' <- updateScenario (scs { pastMoveStack = (tail . pastMoveStack) scs
                                 , futureMoveQueue =  a : futureMoveQueue scs
                                 }) update
@@ -252,6 +253,7 @@ isWinningState :: ScenarioState sc -> Bool
 isWinningState scs = emptyTargets scs == 0
 
 -- | A storage for everything that changed within a 'ScenarioState'.
+--   This includes the previous and current player position and their underlying @Feature@s.
 -- === See also
 -- > 'askPlayerMove', 'updateScenario'
 data ScenarioUpdate = ScenarioUpdate
@@ -279,7 +281,7 @@ askPlayerMove scs dir =
                      fs = getFeature sc cs               -- shift target feature
                  if walkable ft
                    then -- Move the player onto the target Feature
-                        Right ScenarioUpdate { changedFeatures = []
+                        Right ScenarioUpdate { changedFeatures = [(p, fromMaybe Floor (getFeature sc p)), (tp, ft)]
                                              , newPlayerCoord = tp
                                              , newEmptyTargets = emptyTargets scs
                                              , performedPlayerAction = (Just . RMove) dir }
@@ -288,7 +290,7 @@ askPlayerMove scs dir =
                              (True, True)  ->        -- perform a shift and move the player
                                   let (ft1, targetChange1) = combineFeatures ft            Floor
                                       (ft2, targetChange2) = combineFeatures (fromJust fs) ft
-                                  in Right  $ ScenarioUpdate { changedFeatures = [(tp, ft1), (cs, ft2)]
+                                  in Right  $ ScenarioUpdate { changedFeatures = [(p, fromMaybe Floor (getFeature sc p)), (tp, ft1), (cs, ft2)]
                                                              , newPlayerCoord = tp
                                                              , newEmptyTargets = emptyTargets scs + targetChange1 + targetChange2
                                                              , performedPlayerAction = (Just . RShift) dir}
