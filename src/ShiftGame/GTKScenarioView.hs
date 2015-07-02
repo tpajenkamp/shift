@@ -53,18 +53,20 @@ TextView based view
 data TextViewUpdateListener = TextViewUpdateListener TextBuffer
 
 instance UpdateListener TextViewUpdateListener IO MatrixScenario where
-  notifyUpdate :: TextViewUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyUpdate (TextViewUpdateListener tBuffer) _ = do
+  notifyUpdate :: TextViewUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
+  notifyUpdate l@(TextViewUpdateListener tBuffer) _ = do
       scState <- ask -- todo: player position
       let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
       (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
-  notifyNew :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyNew (TextViewUpdateListener tBuffer) = do
+      return l
+  notifyNew :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
+  notifyNew l@(TextViewUpdateListener tBuffer) = do
       scState <- ask -- todo: player position
       let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
       (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
-  notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyWin (TextViewUpdateListener tBuffer) = do lift $ putStrLn "you win!"
+      return l
+  notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
+  notifyWin l@(TextViewUpdateListener tBuffer) = do lift $ putStrLn "you win!" >> return l
 
 
 
@@ -92,14 +94,15 @@ data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool
                                                  }
 
 instance UpdateListener CanvasUpdateListener IO MatrixScenario where
-  notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyUpdate (CanvasUpdateListener imgs widget sfcRef) _ = do
+  notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
+  notifyUpdate l@(CanvasUpdateListener imgs widget sfcRef) _ = do
       sfc <- lift $ readIORef sfcRef
       scs <- ask
       lift $ drawScenario imgs sfc scs
       lift $ widgetQueueDraw widget
-  notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyNew (CanvasUpdateListener imgs widget sfcRef) = do
+      return l
+  notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
+  notifyNew l@(CanvasUpdateListener imgs widget sfcRef) = do
       sfc <- lift $ readIORef sfcRef
       scs <- ask
       -- create new surface if dimension changed
@@ -115,8 +118,9 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
       -- redraw scenario surface
       lift $ drawScenario imgs sfc scs
       lift $ widgetQueueDraw widget
-  notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO ()
-  notifyWin _ = do lift $ putStrLn "fancy: you win!"
+      return l
+  notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
+  notifyWin l = do lift $ putStrLn "fancy: you win!" >> return l
 
 scenarioRender :: ImagePool -> ScenarioState MatrixScenario -> Cairo.Render ()
 scenarioRender imgs scs = do

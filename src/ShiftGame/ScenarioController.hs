@@ -24,18 +24,18 @@ import ShiftGame.Scenario
 
 -- | A listener that can be informed about @ScenarioUpdate@s.
 class UpdateListener u m sc | u -> m sc where
-  notifyUpdate :: u -> ScenarioUpdate -> ReaderT (ScenarioState sc) m ()
+  notifyUpdate :: u -> ScenarioUpdate -> ReaderT (ScenarioState sc) m u
   notifyUpdate u _ = notifyNew u
-  notifyNew    :: u -> ReaderT (ScenarioState sc) m ()
-  notifyWin    :: u -> ReaderT (ScenarioState sc) m ()
+  notifyNew    :: u -> ReaderT (ScenarioState sc) m u
+  notifyWin    :: u -> ReaderT (ScenarioState sc) m u
 
 -- | A wrapper for any 'UpdateListener' data.
 data UpdateListenerType m sc = forall a. UpdateListener a m sc => UpdateListenerType a
 
-instance UpdateListener (UpdateListenerType m sc) m sc where
-  notifyUpdate (UpdateListenerType l) u = notifyUpdate l u
-  notifyNew (UpdateListenerType l) = notifyNew l
-  notifyWin (UpdateListenerType l) = notifyWin l
+instance Monad m => UpdateListener (UpdateListenerType m sc) m sc where
+  notifyUpdate (UpdateListenerType l) u = notifyUpdate l u >>= (return . UpdateListenerType)
+  notifyNew (UpdateListenerType l) = notifyNew l >>= (return . UpdateListenerType)
+  notifyWin (UpdateListenerType l) = notifyWin l >>= (return . UpdateListenerType)
 
 -- | Cotroller for propagating and executing player commands and linking them to the game logic.
 --   
@@ -100,10 +100,12 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                                      put $ cs { scenarioState = s' }
                                      cs' <- get
                                      -- inform all listeners about change
-                                     lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate update) (listeners cs')
+                                     lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate update) (listeners cs')
                                      -- test winning condition
-                                     when (isWinningState s') $
-                                         lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . notifyWin) (listeners cs')
+                                     lst' <- if (isWinningState s')
+                                         then lift $ sequence $ map (flip runReaderT (scenarioState cs') . notifyWin) lst
+                                         else return lst
+                                     modify (\cs -> cs { listeners = lst' })
                                      return Nothing
     addListener l = do modify (\cs -> cs { listeners = UpdateListenerType l : listeners cs })
                        cs <- get
@@ -111,20 +113,23 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                        return ()
     setScenario sc = do modify (\cs -> cs { scenarioState = sc })
                         cs <- get
-                        lift $ sequence_ $ map (flip runReaderT (scenarioState cs) . notifyNew) (listeners cs)
+                        lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs) . notifyNew) (listeners cs)
+                        modify (\cs -> cs { listeners = lst })
                         return ()
     undoAction = do cs <- get
                     case undo (scenarioState cs) of
                          Left r -> (return . Just) r
                          Right (u, scs) -> do put (cs { scenarioState = scs })
                                               cs' <- get
-                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
+                                              lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
+                                              modify (\cs -> cs { listeners = lst })
                                               return Nothing
     redoAction = do cs <- get
                     case redo (scenarioState cs) of
                          Left r -> (return . Just) r
                          Right (u, scs) -> do put (cs { scenarioState = scs })
                                               cs' <- get
-                                              lift $ sequence_ $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
+                                              lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
+                                              modify (\cs -> cs { listeners = lst })
                                               return Nothing
 
