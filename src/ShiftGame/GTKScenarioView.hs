@@ -193,38 +193,45 @@ drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 
 loadImagePool :: FilePath -> IO ImagePool
 loadImagePool parent = do
-    content <- getDirectoryContents parent
-    let dict = M.empty :: M.Map Feature Cairo.Surface
-        contentWithPath = map (\f -> parent ++ pathSeparator:f) content
-    ftMap <- join $ fmap (foldM addIfFeature dict) (filterM doesFileExist contentWithPath)
-    pImg <- getPlayerImage content
-    return $ ImagePool ftMap M.empty pImg
-  where addIfFeature :: M.Map Feature Cairo.Surface -> FilePath -> IO (M.Map Feature Cairo.Surface)
-        addIfFeature m path = do
-            let fileName = (takeFileName . dropExtensions) path
-            case readMaybe fileName :: Maybe Feature of
-                 Nothing -> return m
-                 Just f -> do
-                     s <- Cairo.imageSurfaceCreateFromPNG path
-                     return $ M.insert f s m
-        getPlayerImage :: [FilePath] -> IO Cairo.Surface
-        getPlayerImage content =
-            case find ((==) "Player" . dropExtensions) content of
-                 Just p -> Cairo.imageSurfaceCreateFromPNG (parent ++ pathSeparator:p)
-                 Nothing -> do
-                     sfc <- Cairo.createImageSurface Cairo.FormatARGB32 48 48
-                     Cairo.renderWith sfc (Cairo.rectangle 0 0 48 48 >>
-                                           Cairo.setSourceRGBA 1.0 0.0 1.0 0.0 >>
-                                           Cairo.fill >>
-                                           Cairo.setSourceRGBA 0.0 1.0 0.0 1.0 >>
-                                           Cairo.setLineWidth 7.0 >>
-                                           Cairo.moveTo 9 9 >>
-                                           Cairo.lineTo 38 38 >>
-                                           Cairo.moveTo 9 38 >>
-                                           Cairo.lineTo 38 9 >>
-                                           Cairo.stroke
-                                           )
-                     return sfc
+    (ftMap, pMap) <- foldM readFeatureImage (M.empty, M.empty) [minBound..maxBound]
+    pImg <- getPlayerImage
+    return $ ImagePool ftMap pMap pImg
+  where -- | Tries to find Feature image (<parent_path>/<feature>.png) and
+        --   Feature image with player (<parent_path>/<feature>_Player.png), adds them to map if possible
+        readFeatureImage :: (M.Map Feature Cairo.Surface, M.Map Feature Cairo.Surface)    -- ^ (Feature map, Feature+Player map)
+                         -> Feature                                                       -- ^ Feature to search image for
+                         -> IO (M.Map Feature Cairo.Surface, M.Map Feature Cairo.Surface)
+        readFeatureImage (mFeature, mPlayer) ft = do
+            let pathFeature = (parent ++ pathSeparator:(show ft) ++ ".png")
+                pathWithPlayer =  (parent ++ pathSeparator:(show ft) ++ "_Player.png")
+            exist <- doesFileExist pathFeature
+            mFeature' <- if exist
+                        then Cairo.imageSurfaceCreateFromPNG pathFeature >>= return . (flip . M.insert) ft mFeature
+                        else return mFeature
+            existP <- doesFileExist pathWithPlayer
+            mPlayer' <- if existP
+                         then Cairo.imageSurfaceCreateFromPNG pathWithPlayer >>= return . (flip . M.insert) ft mPlayer
+                         else return mPlayer
+            return (mFeature', mPlayer')
+        getPlayerImage :: IO Cairo.Surface
+        getPlayerImage = do
+            let playerPath = parent ++ pathSeparator:"Player.png"
+            exist <- doesFileExist playerPath
+            if exist
+              then Cairo.imageSurfaceCreateFromPNG playerPath
+              else do sfc <- Cairo.createImageSurface Cairo.FormatARGB32 48 48
+                      Cairo.renderWith sfc (Cairo.rectangle 0 0 48 48 >>
+                                            Cairo.setSourceRGBA 1.0 0.0 1.0 0.0 >>
+                                            Cairo.fill >>
+                                            Cairo.setSourceRGBA 0.0 1.0 0.0 1.0 >>
+                                            Cairo.setLineWidth 7.0 >>
+                                            Cairo.moveTo 9 9 >>
+                                            Cairo.lineTo 38 38 >>
+                                            Cairo.moveTo 9 38 >>
+                                            Cairo.lineTo 38 9 >>
+                                            Cairo.stroke
+                                            )
+                      return sfc
 
 
 copyScenarioToSurface :: ImagePool -> IORef Cairo.Surface -> Cairo.Render ()
