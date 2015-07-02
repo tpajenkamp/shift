@@ -28,10 +28,10 @@ data Feature = Wall    -- ^ static wall
              | Object  -- ^ object that can be moved around
              | Target  -- ^ target where objects should be shifted on
              | TargetX -- ^ target occupied by an object
-             deriving (Eq, Enum, Ord, Show, Read)
+             deriving (Eq, Enum, Bounded, Ord, Show, Read)
 
 -- | Valid player move directions.
-data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Enum, Show, Read)
+data PlayerMovement = MLeft | MRight | MUp | MDown deriving (Eq, Enum, Bounded, Show, Read)
 
 -- | Possible movement reactions of the player character.
 data CharacterReaction = RMove PlayerMovement | RShift PlayerMovement deriving (Eq, Show, Read)
@@ -43,7 +43,7 @@ data DenyReason = PathBlocked  -- ^ The target @Feature@ can neither be walked o
                 | NoAction     -- ^ No available action for undo or redo
                 | ActionUnsupported -- ^ The desired feature is not supported
                 | InvalidMove  -- ^ Generic failure that cannot be represented by the above
-                deriving (Eq, Enum, Show, Read)
+                deriving (Eq, Enum, Bounded, Show, Read)
 
 -- | @Feature@ can be walked on?
 walkable :: Feature -> Bool
