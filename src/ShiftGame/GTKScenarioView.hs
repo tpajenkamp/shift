@@ -20,7 +20,7 @@ import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.State.Lazy
 import           Data.IORef
-import           Data.List (find)
+import           Data.List (find, partition)
 import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Graphics.Rendering.Cairo (liftIO)
@@ -88,21 +88,21 @@ data ImagePool = ImagePool { featureMap :: M.Map Feature Cairo.Surface -- ^ map 
                            , playerImg  :: Cairo.Surface               -- ^ player image to draw onto feature if not contained in playerMap
                            }
 
-data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool 
-                                                 , drawCanvas     :: DrawingArea
-                                                 , surfaceRef     :: IORef Cairo.Surface
+data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool            -- ^ Available images to draw onto canvas
+                                                 , drawCanvas     :: DrawingArea          -- ^ Connected @DrawingArea@ serving as canvas
+                                                 , surfaceRef     :: IORef Cairo.Surface  -- ^ Reference to Cairo image of currently drawed scenario
+                                                 , lowScenarioBnd :: (Int, Int)           -- ^ Lower (x, y) bounds of current scenario
                                                  }
 
 instance UpdateListener CanvasUpdateListener IO MatrixScenario where
   notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
-  notifyUpdate l@(CanvasUpdateListener imgs widget sfcRef) _ = do
+  notifyUpdate l@(CanvasUpdateListener imgs widget sfcRef lowBnd) u = do
       sfc <- lift $ readIORef sfcRef
-      scs <- ask
-      lift $ drawScenario imgs sfc scs
-      lift $ widgetQueueDraw widget
+      invalRegion <- lift $ Cairo.renderWith sfc (scenarioUpdateRender imgs u lowBnd)
+      lift $ widgetQueueDrawRegion widget invalRegion
       return l
   notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
-  notifyNew l@(CanvasUpdateListener imgs widget sfcRef) = do
+  notifyNew l@(CanvasUpdateListener imgs widget sfcRef _) = do
       sfc <- lift $ readIORef sfcRef
       scs <- ask
       -- create new surface if dimension changed
@@ -118,7 +118,7 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
       -- redraw scenario surface
       lift $ drawScenario imgs sfc scs
       lift $ widgetQueueDraw widget
-      return l
+      return l { lowScenarioBnd = (lx,ly) }
   notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
   notifyWin l = do lift $ putStrLn "fancy: you win!" >> return l
 
@@ -147,6 +147,45 @@ scenarioRender imgs scs = do
             in case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
                     Just sfc -> Cairo.setSourceSurface sfc xc yc >> Cairo.paint
                     Nothing -> Cairo.setSourceSurface (playerImg imgs) xc yc >> Cairo.paint
+
+scenarioUpdateRender :: ImagePool                    -- ^ single sprites
+                     -> ScenarioUpdate               -- ^ new scenario state
+                     -> (Int, Int)                   -- ^ lower (x, y) scenario bounds
+                     -> Cairo.Render (Cairo.Region)
+scenarioUpdateRender imgs u (lx, ly) = do
+    -- overpaint given coordinates
+    let pc = newPlayerCoord u
+        -- find current player position in update list
+        (pCoord, pNotCoord) = partition (\(c, _) -> c == pc) (changedFeatures u)
+    inval  <- sequence $ map drawFeature pNotCoord
+    inval' <- sequence $ map drawPlayer pCoord
+    Cairo.regionCreateRectangles (inval ++ inval')
+  where drawFeature :: (Coord, Feature) -> Cairo.Render Cairo.RectangleInt
+        drawFeature ((x, y), ft) = do
+            let xc = (x - lx) * 48
+                yc = (y - ly) * 48
+                xcd = fromIntegral xc :: Double
+                ycd = fromIntegral yc :: Double
+            case M.lookup ft (featureMap imgs) of
+                 Just sfc -> Cairo.setSourceSurface sfc xcd ycd >> Cairo.paint
+                 Nothing -> do Cairo.rectangle xcd ycd 48 48
+                               Cairo.setSourceRGB 1.0 0.0 1.0
+                               Cairo.fill
+            return $ Cairo.RectangleInt xc yc 48 48
+        drawPlayer :: (Coord, Feature) -> Cairo.Render Cairo.RectangleInt
+        drawPlayer item@((x, y), ft) = do
+            let xc = (x - lx) * 48
+                yc = (y - ly) * 48
+                xcd = fromIntegral xc
+                ycd = fromIntegral yc
+            case M.lookup ft (playerMap imgs) of
+                 -- draw combined "Feature+Player" image, if available
+                 Just sfc -> Cairo.setSourceSurface sfc xcd ycd >> Cairo.paint
+                 -- draw raw feature and paint player image on top
+                 Nothing -> do drawFeature item
+                               Cairo.setSourceSurface (playerImg imgs) xcd ycd
+                               Cairo.paint
+            return $ Cairo.RectangleInt xc yc 48 48
 
 drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
 drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
@@ -197,14 +236,15 @@ copyScenarioToSurface imgs mapSurfaceRef = do
 
 createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO CanvasUpdateListener
 createCanvasViewLink imgs drawin scs = do
-    let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+    let sc = scenario scs
+        ((lx,ly), (hx, hy)) = getMatrixScenarioBounds sc
         xSpan = (hx-lx + 1) * 48
         ySpan = (hy-ly + 1) * 48
     scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
     scenRef <- newIORef scenSurface
     widgetSetSizeRequest drawin xSpan ySpan
     drawin `on` draw $ copyScenarioToSurface imgs scenRef
-    return $ CanvasUpdateListener imgs drawin scenRef
+    return $ CanvasUpdateListener imgs drawin scenRef (lx, ly)
 
 
 {-
