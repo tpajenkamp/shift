@@ -107,9 +107,9 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                                          else return lst
                                      modify (\cs -> cs { listeners = lst' })
                                      return Nothing
-    addListener l = do modify (\cs -> cs { listeners = UpdateListenerType l : listeners cs })
-                       cs <- get
-                       lift $ runReaderT (notifyNew l) (scenarioState cs)
+    addListener l = do cs <- get
+                       l' <- lift $ runReaderT (notifyNew l) (scenarioState cs)
+                       modify (\cs -> cs { listeners = UpdateListenerType l' : listeners cs })
                        return ()
     setScenario sc = do modify (\cs -> cs { scenarioState = sc })
                         cs <- get
