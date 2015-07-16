@@ -216,7 +216,7 @@ undo scs = do
         Left PathBlocked
     update <- case a of
                    (RMove _) -> return $ ScenarioUpdate [(playercoord, plFeature), (backcoord, plFeature')]
-                                             backcoord (emptyTargets scs) Nothing
+                                             backcoord (emptyTargets scs) (steps-1, steps'+1) Nothing
                    (RShift _) -> do
                        let backshiftFrom = moveCoordinate dir playercoord
                        backshiftFeature <- case getFeature sc backshiftFrom of
@@ -229,7 +229,7 @@ undo scs = do
                        let (newFeatureP, chg)   = combineFeatures plFeature backshiftFeature
                            (newFeatureP', chg') = combineFeatures backshiftFeature Floor
                        return $ ScenarioUpdate [(playercoord, newFeatureP), (backcoord, plFeature'), (backshiftFrom, newFeatureP')]
-                                    backcoord (emptyTargets scs + chg + chg') Nothing
+                                    backcoord (emptyTargets scs + chg + chg') (steps-1, steps'+1) Nothing
     scs' <- updateScenario (scs { spentSteps = (steps-1, steps' + 1)
                                 , pastMoveStack = (tail . pastMoveStack) scs
                                 , futureMoveQueue =  a : futureMoveQueue scs
@@ -245,9 +245,7 @@ redo scs = case futureMoveQueue scs of
                                Left r -> Left r
                                Right update -> do
                                    let update' = update { performedPlayerAction = Nothing }
-                                       (steps, steps') = spentSteps scs
-                                   scs' <- updateScenario (scs { spentSteps = (steps+1, steps'+1)
-                                                               , pastMoveStack = a : pastMoveStack scs
+                                   scs' <- updateScenario (scs { pastMoveStack = a : pastMoveStack scs
                                                                , futureMoveQueue = (tail . futureMoveQueue) scs
                                                                }) update'
                                    Right (update', scs')
@@ -266,6 +264,7 @@ data ScenarioUpdate = ScenarioUpdate
                                                               --   and the corresponding @Feature@ is the @Feature@ after the update
                       , newPlayerCoord  :: Coord              -- ^ the player coordinates after the update
                       , newEmptyTargets :: Int                -- ^ the total amount of unoccupied targets after the update
+                      , updatedSteps    :: (Int, Int)         -- ^ effective and total number of steps
                       , performedPlayerAction    :: Maybe CharacterReaction -- ^ the action type or @Nothing@ if it should not change the stored movement queue
                       } deriving (Eq, Show, Read)
 
@@ -284,11 +283,13 @@ askPlayerMove scs dir =
                      cs = moveCoordinate dir tp          -- shift target coord
                      fs :: Maybe Feature
                      fs = getFeature sc cs               -- shift target feature
+                     (steps, steps') = spentSteps scs    -- effective and total steps so far
                  if walkable ft
                    then -- Move the player onto the target Feature
                         Right ScenarioUpdate { changedFeatures = [(p, fromMaybe Floor (getFeature sc p)), (tp, ft)]
                                              , newPlayerCoord = tp
                                              , newEmptyTargets = emptyTargets scs
+                                             , updatedSteps = (steps + 1, steps' + 1)
                                              , performedPlayerAction = (Just . RMove) dir }
                    else -- The target Feature cannot be walked on, but it may be shifted away
                         case (shiftable ft, (not . isNothing) fs && targetable (fromJust fs)) of
@@ -298,6 +299,7 @@ askPlayerMove scs dir =
                                   in Right  $ ScenarioUpdate { changedFeatures = [(p, fromMaybe Floor (getFeature sc p)), (tp, ft1), (cs, ft2)]
                                                              , newPlayerCoord = tp
                                                              , newEmptyTargets = emptyTargets scs + targetChange1 + targetChange2
+                                                             , updatedSteps = (steps + 1, steps' + 1)
                                                              , performedPlayerAction = (Just . RShift) dir}
                              (True, False) -> Left ShiftBlocked     -- Shift target space is blocked
                              _ -> Left PathBlocked                  -- Feature cannot be shifted
@@ -321,10 +323,7 @@ updateScenario scs u = do let sc = scenario scs
                           return scs { playerCoord = nextPlayerCoord
                                      , scenario = nextScenario
                                      , emptyTargets = newEmptyTargets u
-                                     , spentSteps = let st@(steps, steps') = spentSteps scs
-                                                    in case performedPlayerAction u of
-                                                            Nothing -> st
-                                                            Just _  -> (steps+1, steps'+1)
+                                     , spentSteps = updatedSteps u
                                      , pastMoveStack = case performedPlayerAction u of
                                                             Nothing -> pastMoveStack scs
                                                             Just a  -> a : pastMoveStack scs
