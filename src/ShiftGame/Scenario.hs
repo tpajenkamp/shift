@@ -187,6 +187,7 @@ data ScenarioState sc = ScenarioState
                         { playerCoord  :: Coord -- ^ current player coordinates
                         , scenario     :: sc    -- ^ current 'Scenario'
                         , emptyTargets :: Int   -- ^ the amount of unoccupied targets within the scenario
+                        , spentSteps   :: (Int, Int)             -- ^ step counter excluding and including undos/redos
                         , pastMoveStack   :: [CharacterReaction] -- ^ player movements that led to the current state,
                                                                  --   first element is most recent action
                         , futureMoveQueue :: [CharacterReaction] -- ^ discarded movements for undone actions,
@@ -204,6 +205,7 @@ undo scs = do
         playercoord = playerCoord scs                    -- current player coordinates
         backcoord = moveCoordinate backstep playercoord  -- previous player position
         sc = scenario scs
+        (steps, steps') = spentSteps scs                 -- current (effective steps, total steps)
     plFeature <- case getFeature sc playercoord of       -- feature at player position
                       Just ft -> return ft
                       Nothing -> Left OutsideWorld
@@ -228,7 +230,8 @@ undo scs = do
                            (newFeatureP', chg') = combineFeatures backshiftFeature Floor
                        return $ ScenarioUpdate [(playercoord, newFeatureP), (backcoord, plFeature'), (backshiftFrom, newFeatureP')]
                                     backcoord (emptyTargets scs + chg + chg') Nothing
-    scs' <- updateScenario (scs { pastMoveStack = (tail . pastMoveStack) scs
+    scs' <- updateScenario (scs { spentSteps = (steps-1, steps' + 1)
+                                , pastMoveStack = (tail . pastMoveStack) scs
                                 , futureMoveQueue =  a : futureMoveQueue scs
                                 }) update
     Right (update, scs')
@@ -242,7 +245,9 @@ redo scs = case futureMoveQueue scs of
                                Left r -> Left r
                                Right update -> do
                                    let update' = update { performedPlayerAction = Nothing }
-                                   scs' <- updateScenario (scs { pastMoveStack = a : pastMoveStack scs
+                                       (steps, steps') = spentSteps scs
+                                   scs' <- updateScenario (scs { spentSteps = (steps+1, steps'+1)
+                                                               , pastMoveStack = a : pastMoveStack scs
                                                                , futureMoveQueue = (tail . futureMoveQueue) scs
                                                                }) update'
                                    Right (update', scs')
@@ -316,6 +321,10 @@ updateScenario scs u = do let sc = scenario scs
                           return scs { playerCoord = nextPlayerCoord
                                      , scenario = nextScenario
                                      , emptyTargets = newEmptyTargets u
+                                     , spentSteps = let st@(steps, steps') = spentSteps scs
+                                                    in case performedPlayerAction u of
+                                                            Nothing -> st
+                                                            Just _  -> (steps+1, steps'+1)
                                      , pastMoveStack = case performedPlayerAction u of
                                                             Nothing -> pastMoveStack scs
                                                             Just a  -> a : pastMoveStack scs

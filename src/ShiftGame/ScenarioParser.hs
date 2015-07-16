@@ -167,4 +167,4 @@ parseScenario = do parseData -- many $ parseLine <* lift endOfLine -- does not h
                        colMax = rowLength - 1
                        arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
                        scArray = array ((0, 0), (colMax, rowMax)) arrayList
-                   return $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s) [] []
+                   return $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s) (0, 0) [] []
