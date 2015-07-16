@@ -75,12 +75,21 @@ main = do
    widgetShowAll window
 
    window2 <- windowNew
-   (textArea2, ctrl2) <- createGraphicsBasedView ctrl scenState
-   widgetSetCanFocus textArea2 True
-   modifyIORef settingsRef (\(s, _) -> (s, ctrl2))
-   _ <- textArea2 `on` keyPressEvent $ keyboardHandler settingsRef 
-   set window2 [ containerChild := textArea2]
+   vbox <- vBoxNew False 0
+   set window2 [ containerChild := vbox]
+
+   (canvas, ctrl2) <- createGraphicsBasedView ctrl scenState
+   widgetSetCanFocus canvas True
+   boxPackStart vbox canvas PackGrow 0
+
+   (infobar, ctrl3) <- createInfoBar ctrl2
+   boxPackStart vbox infobar PackRepel 0
+
+   modifyIORef settingsRef (\(s, _) -> (s, ctrl3))
+
+   _ <- canvas `on` keyPressEvent $ keyboardHandler settingsRef 
    widgetShowAll window2
+
    mainGUI
 
 
@@ -109,6 +118,12 @@ createGraphicsBasedView ctrl scs = do
     ctrl' <- controllerAddListener ctrl lst
     return (canvas, ctrl')
 
+createInfoBar :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl -> IO (Statusbar, ctrl)
+createInfoBar ctrl = do
+                   infobar <- statusbarNew
+                   lst <- createStatusBarLink infobar
+                   ctrl' <- controllerAddListener ctrl lst
+                   return (infobar, ctrl')
 
 initSettings :: Scenario sc => ScenarioState sc -> ControlSettings sc
 initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]

@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, MultiParamTypeClasses, InstanceSigs #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, InstanceSigs #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.GTKScenarioView
@@ -255,6 +255,29 @@ createCanvasViewLink imgs drawin scs = do
     _ <- drawin `on` draw $ copyScenarioToSurface scenRef
     return $ CanvasUpdateListener imgs drawin scenRef (lx, ly)
 
+
+data StatusBarListener sc = StatusBarListener Statusbar ContextId
+
+instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
+  notifyUpdate :: (StatusBarListener sc) -> ScenarioUpdate -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
+  notifyUpdate l@(StatusBarListener bar cId) u = do
+      let (steps, steps') = updatedSteps u
+      _ <- lift $ statusbarPush bar cId (show steps ++ " / " ++ show steps')
+      return l
+  notifyNew :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
+  notifyNew l@(StatusBarListener bar cId) = do
+      scs <- ask
+      let (steps, steps') = spentSteps scs
+      _ <- lift $ statusbarPush bar cId (show steps ++ " / " ++ show steps')
+      return l
+  notifyWin :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
+  notifyWin l = return l
+
+createStatusBarLink :: Scenario sc => Statusbar -> IO (StatusBarListener sc)
+createStatusBarLink bar = do
+    contextId <- statusbarGetContextId bar "Steps"
+    return $ StatusBarListener bar contextId
+    
 
 {-
 Keyboard Listener
