@@ -63,29 +63,35 @@ main = do
    -- initialize window
    _ <- initGUI
    window <- windowNew
+   vbox <- vBoxNew False 0    -- main container for window
+   set window [ containerChild := vbox]
    -- add text view
    (textArea, ctrl) <- createTextBasedView (initControllerState scenState :: ControllerState IO MatrixScenario)
+   boxPackStart vbox textArea PackGrow 0
    -- widget key focus, key event
    widgetSetCanFocus textArea True
-   settingsRef <- newIORef (initSettings scenState, ctrl)
+   -- add status bar
+   (infobar, ctrl') <- createInfoBar ctrl
+   boxPackStart vbox infobar PackRepel 0
+   -- add keyboard listener
+   settingsRef <- newIORef (initSettings scenState, ctrl')
    _ <- textArea `on` keyPressEvent $ keyboardHandler settingsRef 
    -- finalize window
-   set window [ containerChild := textArea]
    _ <- window `on` deleteEvent $ lift mainQuit >> return False
    widgetShowAll window
 
    window2 <- windowNew
-   vbox <- vBoxNew False 0
-   set window2 [ containerChild := vbox]
-
-   (canvas, ctrl2) <- createGraphicsBasedView ctrl scenState
+   vbox2 <- vBoxNew False 0    -- main container for window2
+   set window2 [ containerChild := vbox2]
+   -- add graphical view
+   (canvas, ctrl2) <- createGraphicsBasedView ctrl' scenState
    widgetSetCanFocus canvas True
-   boxPackStart vbox canvas PackGrow 0
+   boxPackStart vbox2 canvas PackGrow 0
+   -- add status bar
+   (infobar2, ctrl2') <- createInfoBar ctrl2
+   boxPackStart vbox2 infobar2 PackRepel 0
 
-   (infobar, ctrl3) <- createInfoBar ctrl2
-   boxPackStart vbox infobar PackRepel 0
-
-   modifyIORef settingsRef (\(s, _) -> (s, ctrl3))
+   modifyIORef settingsRef (\(s, _) -> (s, ctrl2'))
 
    _ <- canvas `on` keyPressEvent $ keyboardHandler settingsRef 
    widgetShowAll window2
