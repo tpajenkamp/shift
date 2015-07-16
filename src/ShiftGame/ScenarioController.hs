@@ -130,6 +130,11 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                          Right (u, scs) -> do put (cs { scenarioState = scs })
                                               cs' <- get
                                               lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
-                                              modify (\cs -> cs { listeners = lst })
+                                              -- test winning condition
+                                              lst' <- if (isWinningState scs)
+                                                then lift $ sequence $ map (flip runReaderT (scenarioState cs') . notifyWin) lst
+                                                else return lst
+                                              -- update ControllerState
+                                              modify (\cs -> cs { listeners = lst' })
                                               return Nothing
 
