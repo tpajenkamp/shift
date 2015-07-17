@@ -29,6 +29,7 @@ import           Graphics.UI.Gtk hiding (get, rectangle)
 import           System.Directory (doesFileExist)
 import           System.FilePath (pathSeparator)
 
+
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 
@@ -271,7 +272,7 @@ instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
       _ <- lift $ statusbarPush bar cId (show steps ++ " / " ++ show steps')
       return l
   notifyWin :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
-  notifyWin l = do
+  notifyWin l@(StatusBarListener bar cId) = do
       scs <- ask
       let (steps, steps') = spentSteps scs
       _ <- lift $ statusbarPush bar cId ("Victory! " ++ show steps ++ " / " ++ show steps')
