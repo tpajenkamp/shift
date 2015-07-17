@@ -12,7 +12,7 @@ data-dir: ""
 extra-source-files: README.md
  
 executable shift
-    build-depends: base >=4.7 && <4.9, directory >= 1.0.0.0, filepath >= 1.0,
+    build-depends: base >=4.6 && <4.9, directory >= 1.0.0.0, filepath >= 1.0,
                    array -any, containers -any,
                    mtl -any, transformers -any, vector -any,
                    attoparsec -any, bytestring -any, deepseq -any,
