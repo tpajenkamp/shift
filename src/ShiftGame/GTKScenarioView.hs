@@ -271,7 +271,11 @@ instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
       _ <- lift $ statusbarPush bar cId (show steps ++ " / " ++ show steps')
       return l
   notifyWin :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
-  notifyWin l = return l
+  notifyWin l = do
+      scs <- ask
+      let (steps, steps') = spentSteps scs
+      _ <- lift $ statusbarPush bar cId ("Victory! " ++ show steps ++ " / " ++ show steps')
+      return l
 
 createStatusBarLink :: Scenario sc => Statusbar -> IO (StatusBarListener sc)
 createStatusBarLink bar = do
