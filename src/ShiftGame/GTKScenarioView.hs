@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, InstanceSigs #-}
+{-# LANGUAGE BangPatterns, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, InstanceSigs #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.GTKScenarioView
@@ -25,6 +25,7 @@ import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Graphics.Rendering.Cairo (liftIO)
 import qualified Graphics.Rendering.Cairo as Cairo
+import qualified Graphics.Rendering.Cairo.Internal as Cairo (surfaceStatus)
 import           Graphics.UI.Gtk hiding (get, rectangle)
 import           System.Directory (doesFileExist)
 import           System.FilePath (pathSeparator)
@@ -138,15 +139,23 @@ scenarioRender imgs scs = do
         drawFeature (lx, ly) c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
             Just sfc -> let xc = (fromIntegral (x - lx)) * 48
                             yc = (fromIntegral (y - ly)) * 48
-                        in Cairo.setSourceSurface sfc xc yc >> Cairo.paint
+                        in do w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth sfc  :: Cairo.Render Double
+                              h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight sfc :: Cairo.Render Double
+                              Cairo.save >> Cairo.rectangle xc yc (min 48 w) (min 48 h) >> Cairo.clip
+                              Cairo.setSourceSurface sfc xc yc >> Cairo.paint >> Cairo.restore
             Nothing -> return ()
         drawPlayer :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
         drawPlayer (lx, ly) c@(x, y) =
             let xc = (fromIntegral (x - lx)) * 48
                 yc = (fromIntegral (y - ly)) * 48
-            in case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
-                    Just sfc -> Cairo.setSourceSurface sfc xc yc >> Cairo.paint
-                    Nothing -> Cairo.setSourceSurface (playerImg imgs) xc yc >> Cairo.paint
+            in do img <- case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
+                              Just sfc -> return sfc
+                              Nothing -> return (playerImg imgs)
+                  w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth img  :: Cairo.Render Double
+                  h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight img :: Cairo.Render Double
+                  Cairo.save >> Cairo.rectangle xc yc (min 48 w) (min 48 h) >> Cairo.clip
+                  Cairo.setSourceSurface img xc yc >> Cairo.paint >> Cairo.restore  
+                              
 
 scenarioUpdateRender :: ImagePool                    -- ^ single sprites
                      -> ScenarioUpdate               -- ^ new scenario state
@@ -167,10 +176,11 @@ scenarioUpdateRender imgs u (lx, ly) = do
                 xcd = fromIntegral xc :: Double
                 ycd = fromIntegral yc :: Double
             case M.lookup ft (featureMap imgs) of
-                 Just sfc -> Cairo.setSourceSurface sfc xcd ycd >> Cairo.paint
-                 Nothing -> do Cairo.rectangle xcd ycd 48 48
-                               Cairo.setSourceRGB 1.0 0.0 1.0
-                               Cairo.fill
+                 Just sfc -> do w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth sfc  :: Cairo.Render Double
+                                h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight sfc :: Cairo.Render Double
+                                Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
+                                Cairo.setSourceSurface sfc xcd ycd >> Cairo.paint >> Cairo.restore
+                 Nothing -> renderEmptyRect xcd ycd 48 48 (1.0, 0.0, 1.0, 1.0)
             return $ Cairo.RectangleInt xc yc 48 48
         drawPlayer :: (Coord, Feature) -> Cairo.Render Cairo.RectangleInt
         drawPlayer item@((x, y), ft) = do
@@ -178,17 +188,41 @@ scenarioUpdateRender imgs u (lx, ly) = do
                 yc = (y - ly) * 48
                 xcd = fromIntegral xc
                 ycd = fromIntegral yc
-            case M.lookup ft (playerMap imgs) of
-                 -- draw combined "Feature+Player" image, if available
-                 Just sfc -> do Cairo.setSourceSurface sfc xcd ycd
-                                Cairo.paint
-                                return $ Cairo.RectangleInt xc yc 48 48
-                 -- draw raw feature and paint player image on top
-                 Nothing -> do rectInt <- drawFeature item
-                               Cairo.setSourceSurface (playerImg imgs) xcd ycd
-                               Cairo.paint
-                               return rectInt
+            img <- case M.lookup ft (playerMap imgs) of
+                        -- draw combined "Feature+Player" image, if available
+                        Just sfc -> return sfc
+                        -- draw raw feature and paint player image on top
+                        Nothing -> drawFeature item >> return (playerImg imgs)
+            w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth img  :: Cairo.Render Double
+            h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight img :: Cairo.Render Double
+            Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
+            Cairo.setSourceSurface img xcd ycd
+            Cairo.paint >> Cairo.restore
+            return $ Cairo.RectangleInt xc yc 48 48
             
+-- | RGBA color components.
+type CairoColor = (Double, Double, Double, Double)
+
+renderEmptyRect :: Double -> Double -> Double -> Double -> CairoColor -> Cairo.Render ()
+renderEmptyRect x y w h (r, g, b, a) = do
+    Cairo.rectangle x y w h
+    Cairo.setSourceRGBA r g b a
+    Cairo.fill
+
+createEmptySurface :: Int -> Int -> CairoColor -> IO Cairo.Surface
+createEmptySurface w h clr = do
+    sfc <- Cairo.createImageSurface Cairo.FormatARGB32 w h
+    Cairo.renderWith sfc (renderEmptyRect 0 0 (fromIntegral w) (fromIntegral h) clr)
+    return sfc
+
+tryLoadPNG :: FilePath -> IO Cairo.Surface
+tryLoadPNG path = do
+    sfc <- Cairo.imageSurfaceCreateFromPNG path
+    status <- Cairo.surfaceStatus sfc
+    if (status == Cairo.StatusSuccess)
+        then return sfc
+        else putStrLn ("invalid PNG file: " ++ path)
+          >> createEmptySurface 48 48 (0.0, 1.0, 1.0, 1.0)
 
 drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
 drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
@@ -196,7 +230,7 @@ drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 
 loadImagePool :: FilePath -> IO ImagePool
 loadImagePool parent = do
-    (ftMap, pMap) <- foldM readFeatureImage (M.empty, M.empty) [minBound..maxBound]
+    (!ftMap, !pMap) <- foldM readFeatureImage (M.empty, M.empty) [minBound..maxBound]
     pImg <- getPlayerImage
     return $ ImagePool ftMap pMap pImg
   where -- | Tries to find Feature image (<parent_path>/<feature>.png) and
@@ -209,11 +243,11 @@ loadImagePool parent = do
                 pathWithPlayer =  (parent ++ pathSeparator:(show ft) ++ "_Player.png")
             exist <- doesFileExist pathFeature
             mFeature' <- if exist
-                        then Cairo.imageSurfaceCreateFromPNG pathFeature >>= return . (flip . M.insert) ft mFeature
-                        else return mFeature
+                        then tryLoadPNG pathFeature >>= return . (flip . M.insert) ft mFeature
+                        else putStrLn ("missing resource file: " ++ pathFeature) >> return mFeature
             existP <- doesFileExist pathWithPlayer
             mPlayer' <- if existP
-                         then Cairo.imageSurfaceCreateFromPNG pathWithPlayer >>= return . (flip . M.insert) ft mPlayer
+                         then tryLoadPNG pathWithPlayer >>= return . (flip . M.insert) ft mPlayer
                          else return mPlayer
             return (mFeature', mPlayer')
         getPlayerImage :: IO Cairo.Surface
@@ -221,11 +255,10 @@ loadImagePool parent = do
             let playerPath = parent ++ pathSeparator:"Player.png"
             exist <- doesFileExist playerPath
             if exist
-              then Cairo.imageSurfaceCreateFromPNG playerPath
-              else do sfc <- Cairo.createImageSurface Cairo.FormatARGB32 48 48
-                      Cairo.renderWith sfc (Cairo.rectangle 0 0 48 48 >>
-                                            Cairo.setSourceRGBA 1.0 0.0 1.0 0.0 >>
-                                            Cairo.fill >>
+              then tryLoadPNG playerPath
+              else do putStrLn ("missing resource file: " ++ playerPath)
+                      sfc <- Cairo.createImageSurface Cairo.FormatARGB32 48 48
+                      Cairo.renderWith sfc (renderEmptyRect 0 0 48 48 (1.0, 0.0, 1.0, 1.0) >>
                                             Cairo.setSourceRGBA 0.0 1.0 0.0 1.0 >>
                                             Cairo.setLineWidth 7.0 >>
                                             Cairo.moveTo 9 9 >>
