@@ -37,18 +37,69 @@ import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 import ShiftGame.ScenarioParser
 
-testParser :: ByteString -> IO (ScenarioState MatrixScenario)
-testParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario initParseState) levelRaw
-                         unless (isRight possiblyParsed) $
-                             do guard False
-                                (error . fromLeft) possiblyParsed
-                         let (myScenarioState, myParseState) = fromRight possiblyParsed
-                         _ <- evaluate myScenarioState
-                         putStrLn "warnings:"
-                         putStrLn $ (unlines . map show . warnings) myParseState
-                         putStrLn $ "player: " ++ (show . playerCoord) myScenarioState ++ " empty targets: " ++ (show . emptyTargets) myScenarioState
-                         (B.putStrLn . flip showScenarioWithPlayer (playerCoord myScenarioState) . scenario) myScenarioState
-                         return myScenarioState
+runParser :: ByteString -> IO (ScenarioState MatrixScenario)
+runParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario initParseState) levelRaw
+                        unless (isRight possiblyParsed) $
+                            do guard False
+                               (error . fromLeft) possiblyParsed
+                        let (myScenarioState, myParseState) = fromRight possiblyParsed
+                        _ <- evaluate myScenarioState
+                        putStrLn "warnings:"
+                        putStrLn $ (unlines . map show . warnings) myParseState
+                        putStrLn $ "player: " ++ (show . playerCoord) myScenarioState ++ " empty targets: " ++ (show . emptyTargets) myScenarioState
+                        (B.putStrLn . flip showScenarioWithPlayer (playerCoord myScenarioState) . scenario) myScenarioState
+                        return myScenarioState
+
+
+readScenario :: FilePath -> IO (ScenarioState MatrixScenario)
+readScenario levelPath = do
+   levelRaw <- B.readFile levelPath
+   runParser levelRaw
+
+createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => IORef (ControlSettings MatrixScenario, ctrl) -> IO ctrl
+createTextViewWindow sRef = do
+   (_, ctrl) <- readIORef sRef
+   
+   window <- windowNew
+   vbox <- vBoxNew False 0    -- main container for window
+   set window [ containerChild := vbox]
+   -- add text view
+   (textArea, ctrl) <- createTextBasedView ctrl
+   boxPackStart vbox textArea PackGrow 0
+   -- widget key focus, key event
+   widgetSetCanFocus textArea True
+   -- add status bar
+   (infobar, ctrl) <- createInfoBar ctrl
+   boxPackStart vbox infobar PackRepel 0
+   -- add keyboard listener
+   modifyIORef sRef (\(s, _) -> (s, ctrl))
+   _ <- textArea `on` keyPressEvent $ keyboardHandler sRef 
+   -- finalize window
+   _ <- window `on` deleteEvent $ lift mainQuit >> return False
+   widgetShowAll window
+   return ctrl
+
+createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => IORef (ControlSettings MatrixScenario, ctrl) -> IO ctrl
+createGraphicsViewWindow sRef = do
+   (ctrlS, ctrl) <- readIORef sRef
+   let scenState = initialScenario ctrlS
+
+   window2 <- windowNew
+   vbox2 <- vBoxNew False 0    -- main container for window2
+   set window2 [ containerChild := vbox2]
+   -- add graphical view
+   (canvas, ctrl) <- createGraphicsBasedView ctrl scenState
+   widgetSetCanFocus canvas True
+   boxPackStart vbox2 canvas PackGrow 0
+   -- add status bar
+   (infobar2, ctrl) <- createInfoBar ctrl
+   boxPackStart vbox2 infobar2 PackRepel 0
+
+   modifyIORef sRef (\(s, _) -> (s, ctrl))
+
+   _ <- canvas `on` keyPressEvent $ keyboardHandler sRef 
+   widgetShowAll window2
+   return ctrl
 
 
 main :: IO ()
@@ -58,43 +109,14 @@ main = do
    let levelPath = if null args
                      then "level.txt"
                      else head args
-   levelRaw <- B.readFile levelPath
-   scenState <- testParser levelRaw :: IO (ScenarioState MatrixScenario)
+   scenState <- (readScenario levelPath :: IO (ScenarioState MatrixScenario))
    -- initialize window
    _ <- initGUI
-   window <- windowNew
-   vbox <- vBoxNew False 0    -- main container for window
-   set window [ containerChild := vbox]
-   -- add text view
-   (textArea, ctrl) <- createTextBasedView (initControllerState scenState :: ControllerState IO MatrixScenario)
-   boxPackStart vbox textArea PackGrow 0
-   -- widget key focus, key event
-   widgetSetCanFocus textArea True
-   -- add status bar
-   (infobar, ctrl') <- createInfoBar ctrl
-   boxPackStart vbox infobar PackRepel 0
-   -- add keyboard listener
-   settingsRef <- newIORef (initSettings scenState, ctrl')
-   _ <- textArea `on` keyPressEvent $ keyboardHandler settingsRef 
-   -- finalize window
-   _ <- window `on` deleteEvent $ lift mainQuit >> return False
-   widgetShowAll window
-
-   window2 <- windowNew
-   vbox2 <- vBoxNew False 0    -- main container for window2
-   set window2 [ containerChild := vbox2]
-   -- add graphical view
-   (canvas, ctrl2) <- createGraphicsBasedView ctrl' scenState
-   widgetSetCanFocus canvas True
-   boxPackStart vbox2 canvas PackGrow 0
-   -- add status bar
-   (infobar2, ctrl2') <- createInfoBar ctrl2
-   boxPackStart vbox2 infobar2 PackRepel 0
-
-   modifyIORef settingsRef (\(s, _) -> (s, ctrl2'))
-
-   _ <- canvas `on` keyPressEvent $ keyboardHandler settingsRef 
-   widgetShowAll window2
+   let ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
+   sRef <- newIORef (initSettings scenState, ctrl)
+   
+   ctrl <- createTextViewWindow sRef
+   ctrl <- createGraphicsViewWindow sRef
 
    mainGUI
 
