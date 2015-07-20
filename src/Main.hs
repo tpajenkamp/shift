@@ -16,7 +16,7 @@
 module Main where
 
 --import           Control.DeepSeq
-import           Control.Exception.Base
+import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
@@ -48,12 +48,12 @@ runParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario 
                         putStrLn $ (unlines . map show . warnings) myParseState
                         putStrLn $ "player: " ++ (show . playerCoord) myScenarioState ++ " empty targets: " ++ (show . emptyTargets) myScenarioState
                         (B.putStrLn . flip showScenarioWithPlayer (playerCoord myScenarioState) . scenario) myScenarioState
-                        return myScenarioState
+                        return myScenarioState -- todo: parse error
 
 
 readScenario :: FilePath -> IO (ScenarioState MatrixScenario)
 readScenario levelPath = do
-   levelRaw <- B.readFile levelPath
+   levelRaw <- catch (B.readFile levelPath) ((\e -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)::IOError -> IO ByteString)
    runParser levelRaw
 
 createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => IORef (ControlSettings MatrixScenario, ctrl) -> IO ctrl
