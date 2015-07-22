@@ -24,7 +24,8 @@ import           Control.Monad.Trans
 import           Control.Monad.Trans.State.Lazy
 --import           Control.Monad.State.Lazy
 import           Data.Array  as A (array)
-import           Data.Attoparsec.ByteString.Char8 as AP
+import          Data.Attoparsec.ByteString as AP
+import           Data.Attoparsec.ByteString.Char8 as APC
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import           Data.Maybe (fromMaybe, isNothing)
@@ -46,6 +47,9 @@ Goal square 	. 	0x2e
 Floor 	(Space) 	0x20
 
 -}
+
+commentSymbol :: Char
+commentSymbol = ';'
 
 -- | Warnings and errors for parsing a scenario file.
 data ParseWarning = ObjectTargetMismatch Int Int
@@ -108,13 +112,15 @@ parseEntry col ch = case ch of
 
 -- | Parses a single line of a level string.
 --   Ignores empty lines.
-parseLine :: StateT ParseState Parser ()
-parseLine = do line <- lift $ AP.takeWhile (\c -> c /= '\n' && c /= '\r') -- break on line ends
+parseLine :: StateT ParseState Parser Bool
+parseLine = do line <- lift $ APC.takeWhile (\c -> c /= '\n' && c /= '\r') -- break on line ends
                let lineLength = B.length line
                newLine <- V.generateM lineLength (tokenParser line) -- new row vector has fitting line length
                when ((not . V.null) newLine) $ -- add row only if it is not empty
                    modify (\s -> s { linesReverse = newLine : linesReverse s
                                    , linesCount = 1 + linesCount s })
+               lift $ endOfLine <|> endOfInput
+               return True
   where tokenParser :: Monad m => ByteString -> Int -> StateT ParseState m Feature
         tokenParser line col = parseEntry col (line `B.index` col)
 
@@ -132,13 +138,24 @@ createScenarioArrayList maxCol row (line:ls) = let lineMax = V.length line - 1
                         map (\c -> ((c, row), Wall)) [maxIx + 1 .. maxCol]
 createScenarioArrayList _ _ [] = []
 
+parseTestCommentLine :: StateT ParseState Parser Bool
+parseTestCommentLine = do
+   lift $ char commentSymbol
+   lift $ AP.skipWhile (not . isEndOfLine)
+   lift $ endOfLine <|> endOfInput
+   return False
+
+parseTestEmptyLine :: StateT ParseState Parser Bool
+parseTestEmptyLine = do
+   lift $ endOfInput
+   return False
+
 -- | Parses string line by line and end at end of input.
 parseData :: StateT ParseState Parser ()
-parseData = do parseLine
-               nextChar <- lift peekChar
-               case nextChar of
-                    Nothing -> return ()
-                    _ -> lift endOfLine <* parseData
+parseData = do continue <- (parseTestEmptyLine <|> parseTestCommentLine <|> parseLine)
+               if continue
+                 then parseData
+                 else return ()
 
 -- | Parses a level string.
 --   Does not fail, the state's 'warnings' field may provide hints for the validity of the string.
@@ -168,3 +185,6 @@ parseScenario = do parseData -- many $ parseLine <* lift endOfLine -- does not h
                        arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
                        scArray = array ((0, 0), (colMax, rowMax)) arrayList
                    return $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s) (0, 0) [] []
+
+parseScenarioCollection :: StateT ParseState Parser [ScenarioState MatrixScenario]
+parseScenarioCollection = undefined
