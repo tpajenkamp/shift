@@ -94,13 +94,13 @@ getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
                                    else Nothing
 
 isFirstScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> Bool
-isFirstScenarioFromPool cs sId = sId == 0
+isFirstScenarioFromPool cs sId = sId <= 0
 
 isFirstScenarioFromPoolCurrent :: Scenario sc => ControlSettings sc-> Bool
 isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario cs)
 
 isLastScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> Bool
-isLastScenarioFromPool cs sId = sId == length (scenarioPool cs) - 1
+isLastScenarioFromPool cs sId = sId >= length (scenarioPool cs) - 1
 
 isLastScenarioFromPoolCurrent :: Scenario sc => ControlSettings sc -> Bool
 isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (currentScenario cs)
