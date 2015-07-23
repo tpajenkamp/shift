@@ -93,6 +93,19 @@ getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
                                    then Just $ scenarioPool cs !! sId
                                    else Nothing
 
+increaseScenarioId :: Scenario sc => ControlSettings sc -> Maybe (ControlSettings sc, ScenarioState sc, Int)
+increaseScenarioId cs = let currentScenarioId = currentScenario cs
+   in if isLastScenarioFromPool cs currentScenarioId
+        then Nothing
+        else Just (cs { currentScenario = currentScenarioId + 1 }, scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
+
+decreaseScenarioId :: Scenario sc => ControlSettings sc -> Maybe (ControlSettings sc, ScenarioState sc, Int)
+decreaseScenarioId cs = let currentScenarioId = currentScenario cs
+   in if isFirstScenarioFromPool cs currentScenarioId
+        then Nothing
+        else Just (cs { currentScenario = currentScenarioId - 1 }, scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
+
+
 isFirstScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> Bool
 isFirstScenarioFromPool cs sId = sId <= 0
 
@@ -351,6 +364,26 @@ createStatusBarLink bar = do
     contextId <- statusbarGetContextId bar "Steps"
     return $ StatusBarListener bar contextId
 
+{-
+Next level switcher
+Automatically switch to next level on win event
+-}
+
+data LevelProgressor sc ctrl = LevelProgressor (IORef (ControlSettings sc, ctrl))
+
+instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelProgressor sc ctrl) IO sc where
+  notifyUpdate l _ = return l
+  notifyNew l = return l
+  notifyWin l@(LevelProgressor ioRef) = do
+     lift $ postGUIAsync (do (cs, ctrl) <- readIORef ioRef
+                             case increaseScenarioId cs of
+                                  Just(cs', newScen, _) -> do
+                                     (_, newState) <- runStateT (setScenario newScen) ctrl
+                                     putStrLn "progressed to next level"
+                                     writeIORef ioRef (cs', newState)
+                                  Nothing -> putStrLn "Dark Victory!!!!"
+                             return ())
+     return l
 
 {-
 Keyboard Listener
@@ -372,18 +405,20 @@ keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                                  (lift . writeIORef ref) (ctrlSettings, newState)
                                  return True
                          else if (keyV `elem` keysNext ctrlSettings)
-                         then do unless (isLastScenarioFromPoolCurrent ctrlSettings) $ do
-                                   let nextScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings + 1)
-                                   (_, newState) <- lift $ runStateT (setScenario nextScen) ctrlState
-                                   lift $ putStrLn "next level"
-                                   (lift . writeIORef ref) (ctrlSettings { currentScenario = currentScenario ctrlSettings + 1 }, newState)
+                         then do case increaseScenarioId ctrlSettings of
+                                      Just (ctrlSettings', nextScen, _) -> do
+                                         (_, newState) <- lift $ runStateT (setScenario nextScen) ctrlState
+                                         lift $ putStrLn "next level"
+                                         (lift . writeIORef ref) (ctrlSettings', newState)
+                                      Nothing -> return ()
                                  return True
                          else if (keyV `elem` keysPrev ctrlSettings)
-                         then do unless (isFirstScenarioFromPoolCurrent ctrlSettings) $ do
-                                   let prevScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings - 1)
-                                   (_, newState) <- lift $ runStateT (setScenario prevScen) ctrlState
-                                   lift $ putStrLn "previous level"
-                                   (lift . writeIORef ref) (ctrlSettings { currentScenario = currentScenario ctrlSettings - 1}, newState)
+                         then do case decreaseScenarioId ctrlSettings of
+                                      Just (ctrlSettings', prevScen, _) -> do
+                                         (_, newState) <- lift $ runStateT (setScenario prevScen) ctrlState
+                                         lift $ putStrLn "next level"
+                                         (lift . writeIORef ref) (ctrlSettings', newState)
+                                      Nothing -> return ()
                                  return True
                          else if (keyV `elem` keysUndo ctrlSettings)
                          then do (err, newState) <- lift $ runStateT undoAction ctrlState

@@ -99,7 +99,7 @@ createGraphicsViewWindow sRef = do
    (infobar2, ctrl) <- createInfoBar ctrl
    boxPackStart vbox2 infobar2 PackRepel 0
 
-   modifyIORef sRef (\(s, _) -> (s, ctrl))
+   writeIORef sRef (ctrlS, ctrl)
 
    _ <- canvas `on` keyPressEvent $ keyboardHandler sRef 
    widgetShowAll window2
@@ -122,6 +122,8 @@ main = do
    
    ctrl <- createTextViewWindow sRef
    ctrl <- createGraphicsViewWindow sRef
+
+   (_, ctrl) <- autoAdvanceLevel sRef
 
    mainGUI
 
@@ -153,10 +155,18 @@ createGraphicsBasedView ctrl scs = do
 
 createInfoBar :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl -> IO (Statusbar, ctrl)
 createInfoBar ctrl = do
-                   infobar <- statusbarNew
-                   lst <- createStatusBarLink infobar
-                   ctrl' <- controllerAddListener ctrl lst
-                   return (infobar, ctrl')
+    infobar <- statusbarNew
+    lst <- createStatusBarLink infobar
+    ctrl' <- controllerAddListener ctrl lst
+    return (infobar, ctrl')
+
+autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => IORef (ControlSettings sc, ctrl) -> IO (LevelProgressor sc ctrl, ctrl)
+autoAdvanceLevel ioRef = do
+    (_, ctrl) <- readIORef ioRef
+    let lst = LevelProgressor ioRef
+    ctrl' <- controllerAddListener ctrl lst
+    modifyIORef ioRef (\(s, _) -> (s, ctrl'))
+    return (lst, ctrl')
 
 initSettings :: Scenario sc => [ScenarioState sc] -> ControlSettings sc
 initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
