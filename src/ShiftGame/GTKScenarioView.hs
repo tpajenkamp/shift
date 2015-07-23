@@ -321,6 +321,10 @@ createCanvasViewLink imgs drawin scs = do
     return $ CanvasUpdateListener imgs drawin scenRef (lx, ly)
 
 
+{-
+Keyboard Listener
+-}
+
 data StatusBarListener sc = StatusBarListener Statusbar ContextId
 
 instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
@@ -346,7 +350,7 @@ createStatusBarLink :: Scenario sc => Statusbar -> IO (StatusBarListener sc)
 createStatusBarLink bar = do
     contextId <- statusbarGetContextId bar "Steps"
     return $ StatusBarListener bar contextId
-    
+
 
 {-
 Keyboard Listener
