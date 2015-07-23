@@ -16,6 +16,7 @@
 module Main where
 
 --import           Control.DeepSeq
+import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Trans.Class
@@ -24,7 +25,6 @@ import           Data.Attoparsec.ByteString.Char8 (parseOnly)
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import           Data.Either
-import           Data.IORef
 import           Graphics.UI.Gtk
 import           System.Environment
 import           System.FilePath (pathSeparator)
@@ -60,9 +60,9 @@ readScenario levelPath = do
    levelRaw <- catch (B.readFile levelPath) ((\e -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)::IOError -> IO ByteString)
    runParser levelRaw
 
-createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => IORef (ControlSettings MatrixScenario, ctrl) -> IO ctrl
+createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ControlSettings MatrixScenario, ctrl) -> IO ctrl
 createTextViewWindow sRef = do
-   (_, ctrl) <- readIORef sRef
+   (cs, ctrl) <- takeMVar sRef
    
    window <- windowNew
    vbox <- vBoxNew False 0    -- main container for window
@@ -76,16 +76,16 @@ createTextViewWindow sRef = do
    (infobar, ctrl) <- createInfoBar ctrl
    boxPackStart vbox infobar PackRepel 0
    -- add keyboard listener
-   modifyIORef sRef (\(s, _) -> (s, ctrl))
+   putMVar sRef (cs, ctrl)
    _ <- textArea `on` keyPressEvent $ keyboardHandler sRef 
    -- finalize window
    _ <- window `on` deleteEvent $ lift mainQuit >> return False
    widgetShowAll window
    return ctrl
 
-createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => IORef (ControlSettings MatrixScenario, ctrl) -> IO ctrl
+createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ControlSettings MatrixScenario, ctrl) -> IO ctrl
 createGraphicsViewWindow sRef = do
-   (ctrlS, ctrl) <- readIORef sRef
+   (ctrlS, ctrl) <- takeMVar sRef
    let scenState = getScenarioFromPool ctrlS (currentScenario ctrlS)
 
    window2 <- windowNew
@@ -99,7 +99,7 @@ createGraphicsViewWindow sRef = do
    (infobar2, ctrl) <- createInfoBar ctrl
    boxPackStart vbox2 infobar2 PackRepel 0
 
-   writeIORef sRef (ctrlS, ctrl)
+   putMVar sRef (ctrlS, ctrl)
 
    _ <- canvas `on` keyPressEvent $ keyboardHandler sRef 
    widgetShowAll window2
@@ -118,7 +118,7 @@ main = do
    _ <- initGUI
    let scenState = case scenStates of [] -> emptyScenarioState; a:_ -> a
        ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
-   sRef <- newIORef (initSettings scenStates, ctrl)
+   sRef <- newMVar (initSettings scenStates, ctrl)
    
    ctrl <- createTextViewWindow sRef
    ctrl <- createGraphicsViewWindow sRef
@@ -160,12 +160,12 @@ createInfoBar ctrl = do
     ctrl' <- controllerAddListener ctrl lst
     return (infobar, ctrl')
 
-autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => IORef (ControlSettings sc, ctrl) -> IO (LevelProgressor sc ctrl, ctrl)
-autoAdvanceLevel ioRef = do
-    (_, ctrl) <- readIORef ioRef
-    let lst = LevelProgressor ioRef
+autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (ControlSettings sc, ctrl) -> IO (LevelProgressor sc ctrl, ctrl)
+autoAdvanceLevel sRef = do
+    (cs, ctrl) <- takeMVar sRef
+    let lst = LevelProgressor sRef
     ctrl' <- controllerAddListener ctrl lst
-    modifyIORef ioRef (\(s, _) -> (s, ctrl'))
+    putMVar sRef (cs, ctrl')
     return (lst, ctrl')
 
 initSettings :: Scenario sc => [ScenarioState sc] -> ControlSettings sc
