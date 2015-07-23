@@ -35,16 +35,18 @@ import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 
 data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
-                                       , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
-                                       , keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
-                                       , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
-                                       , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
-                                       , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
-                                       , keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
-                                       , keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
-                                       , scenarioPool    :: [ScenarioState sc] -- ^ currently loaded scenario
-                                       , currentScenario :: Int                -- ^ id of current scenario in @scenarioPool@
-                                       } deriving (Eq, Show, Read)
+                                          , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
+                                          , keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
+                                          , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
+                                          , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
+                                          , keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
+                                          , keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
+                                          , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
+                                          , keysNext   :: [KeyVal] -- ^ keys (alternatives) to advance to next level
+                                          , keysPrev   :: [KeyVal] -- ^ keys (alternatives) to revert to previous level
+                                          , scenarioPool    :: [ScenarioState sc] -- ^ currently loaded scenario
+                                          , currentScenario :: Int                -- ^ id of current scenario in @scenarioPool@
+                                          } deriving (Eq, Show, Read)
 
 
 
@@ -364,6 +366,20 @@ keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                                  (_, newState) <- lift $ runStateT (setScenario currentScen) ctrlState
                                  lift $ putStrLn "level reset"
                                  (lift . writeIORef ref) (ctrlSettings, newState)
+                                 return True
+                         else if (keyV `elem` keysNext ctrlSettings)
+                         then do unless (isLastScenarioFromPoolCurrent ctrlSettings) $ do
+                                   let nextScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings + 1)
+                                   (_, newState) <- lift $ runStateT (setScenario nextScen) ctrlState
+                                   lift $ putStrLn "next level"
+                                   (lift . writeIORef ref) (ctrlSettings { currentScenario = currentScenario ctrlSettings + 1 }, newState)
+                                 return True
+                         else if (keyV `elem` keysPrev ctrlSettings)
+                         then do unless (isFirstScenarioFromPoolCurrent ctrlSettings) $ do
+                                   let prevScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings - 1)
+                                   (_, newState) <- lift $ runStateT (setScenario prevScen) ctrlState
+                                   lift $ putStrLn "previous level"
+                                   (lift . writeIORef ref) (ctrlSettings { currentScenario = currentScenario ctrlSettings - 1}, newState)
                                  return True
                          else if (keyV `elem` keysUndo ctrlSettings)
                          then do (err, newState) <- lift $ runStateT undoAction ctrlState

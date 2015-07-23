@@ -167,6 +167,8 @@ initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) 
                                  , keysUndo  = map (keyFromName . stringToGlib) ["minus", "KP_Subtract"]
                                  , keysRedo  = map (keyFromName . stringToGlib) ["plus", "KP_Add"]
                                  , keysReset = map (keyFromName . stringToGlib) ["r", "R"]
+                                 , keysNext  = map (keyFromName . stringToGlib) ["n", "N"]
+                                 , keysPrev  = map (keyFromName . stringToGlib) ["p", "P"]
                                  , scenarioPool    = s
                                  , currentScenario = 0
                                  }
