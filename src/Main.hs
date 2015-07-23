@@ -42,23 +42,20 @@ displayScenarioData sc = do
    putStrLn $ "player: " ++ (show . playerCoord) sc ++ " empty targets: " ++ (show . emptyTargets) sc
    (B.putStrLn . flip showScenarioWithPlayer (playerCoord sc) . scenario) sc
 
-runParser :: ByteString -> IO (ScenarioState MatrixScenario)
+runParser :: ByteString -> IO [ScenarioState MatrixScenario]
 runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenarioCollection) initParseState) levelRaw
                         unless (isRight possiblyParsed) $
                             do guard False
                                (error . fromLeft) possiblyParsed
                         let (myScenarioStates, myParseState) = fromRight possiblyParsed
-                            myScenarioState = case myScenarioStates of
-                                                   a:_ -> a
-                                                   []  -> emptyMatrixScenarioState
-                        _ <- evaluate myScenarioState
+                        _ <- mapM evaluate myScenarioStates
                         putStrLn "warnings:"
                         putStrLn $ (unlines . map show . reverse . warnings) myParseState
                         mapM displayScenarioData myScenarioStates
-                        return myScenarioState -- todo: parse error
+                        return myScenarioStates -- todo: parse error
 
 
-readScenario :: FilePath -> IO (ScenarioState MatrixScenario)
+readScenario :: FilePath -> IO [ScenarioState MatrixScenario]
 readScenario levelPath = do
    levelRaw <- catch (B.readFile levelPath) ((\e -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)::IOError -> IO ByteString)
    runParser levelRaw
@@ -89,7 +86,7 @@ createTextViewWindow sRef = do
 createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => IORef (ControlSettings MatrixScenario, ctrl) -> IO ctrl
 createGraphicsViewWindow sRef = do
    (ctrlS, ctrl) <- readIORef sRef
-   let scenState = initialScenario ctrlS
+   let scenState = getScenarioFromPool ctrlS (currentScenario ctrlS)
 
    window2 <- windowNew
    vbox2 <- vBoxNew False 0    -- main container for window2
@@ -116,11 +113,12 @@ main = do
    let levelPath = if null args
                      then "level.txt"
                      else head args
-   scenState <- (readScenario levelPath :: IO (ScenarioState MatrixScenario))
+   scenStates <- readScenario levelPath
    -- initialize window
    _ <- initGUI
-   let ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
-   sRef <- newIORef (initSettings scenState, ctrl)
+   let scenState = case scenStates of [] -> emptyScenarioState; a:_ -> a
+       ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
+   sRef <- newIORef (initSettings scenStates, ctrl)
    
    ctrl <- createTextViewWindow sRef
    ctrl <- createGraphicsViewWindow sRef
@@ -160,7 +158,7 @@ createInfoBar ctrl = do
                    ctrl' <- controllerAddListener ctrl lst
                    return (infobar, ctrl')
 
-initSettings :: Scenario sc => ScenarioState sc -> ControlSettings sc
+initSettings :: Scenario sc => [ScenarioState sc] -> ControlSettings sc
 initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
                                  , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]
                                  , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]
@@ -169,5 +167,6 @@ initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) 
                                  , keysUndo  = map (keyFromName . stringToGlib) ["minus", "KP_Subtract"]
                                  , keysRedo  = map (keyFromName . stringToGlib) ["plus", "KP_Add"]
                                  , keysReset = map (keyFromName . stringToGlib) ["r", "R"]
-                                 , initialScenario = s
+                                 , scenarioPool    = s
+                                 , currentScenario = 0
                                  }

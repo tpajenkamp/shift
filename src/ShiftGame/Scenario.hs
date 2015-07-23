@@ -107,6 +107,7 @@ moveCoordinate MDown  (x, y) = (x, y+1)
 --  > getFeature', 'setFeature'
 --  Definition of 'isInside' is recommended.
 class Scenario sc where
+  createEmptyScenario :: sc
   -- | Test if a coordinate is within the world.
   isInside :: sc -> Coord -> Bool
   isInside sc = not . isNothing . getFeature sc
@@ -127,6 +128,7 @@ newtype MatrixScenario = MatrixScenario { matrix :: Array Coord Feature } derivi
 
 
 instance Scenario MatrixScenario where
+  createEmptyScenario = MatrixScenario (A.listArray ((0,0), (0,0)) [Floor])
   isInside (MatrixScenario mat) c = inRange (bounds mat) c
   getFeature sc@(MatrixScenario mat) c = if isInside sc c
                                            then return $ mat!c
@@ -194,8 +196,8 @@ data ScenarioState sc = ScenarioState
                                                                  --   first entry is the follow-up action
                         } deriving (Eq, Show, Read)
 
-emptyMatrixScenarioState :: ScenarioState MatrixScenario
-emptyMatrixScenarioState = ScenarioState (0, 0) (MatrixScenario (A.listArray ((0,0), (0,0)) [Floor])) 0 (0, 0) [] []
+emptyScenarioState :: Scenario sc => ScenarioState sc
+emptyScenarioState = ScenarioState (0, 0) (createEmptyScenario) 0 (0, 0) [] []
 
 -- | Undo the last movement, returns the changed state or 'Nothing' if no previous action is recorded.
 undo :: Scenario sc => ScenarioState sc -> Either DenyReason (ScenarioUpdate, ScenarioState sc)

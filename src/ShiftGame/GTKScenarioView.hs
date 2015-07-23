@@ -42,7 +42,8 @@ data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (al
                                        , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
                                        , keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
                                        , keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
-                                       , initialScenario :: ScenarioState sc -- ^ currently loaded scenario
+                                       , scenarioPool    :: [ScenarioState sc] -- ^ currently loaded scenario
+                                       , currentScenario :: Int                -- ^ id of current scenario in @scenarioPool@
                                        } deriving (Eq, Show, Read)
 
 
@@ -71,8 +72,36 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
 
 
 
-setInitialScenario :: Scenario sc => ControlSettings sc -> ScenarioState sc -> ControlSettings sc
-setInitialScenario cs s = cs { initialScenario = s }
+setScenarioPool :: Scenario sc => ControlSettings sc -> [ScenarioState sc] -> ControlSettings sc
+setScenarioPool cs s = cs { scenarioPool = s }
+
+setCurrentScenario :: Scenario sc => ControlSettings sc -> Int -> Maybe (ControlSettings sc)
+setCurrentScenario cs sId =
+  if (sId > 0 && sId <= length (scenarioPool cs))
+    then Just $ cs { currentScenario = sId}
+    else Nothing
+
+getScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> ScenarioState sc
+getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
+                              then scenarioPool cs !! sId
+                              else emptyScenarioState
+
+getScenarioFromPoolMaybe :: Scenario sc => ControlSettings sc -> Int -> Maybe (ScenarioState sc)
+getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
+                                   then Just $ scenarioPool cs !! sId
+                                   else Nothing
+
+isFirstScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> Bool
+isFirstScenarioFromPool cs sId = sId == 0
+
+isFirstScenarioFromPoolCurrent :: Scenario sc => ControlSettings sc-> Bool
+isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario cs)
+
+isLastScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> Bool
+isLastScenarioFromPool cs sId = sId == length (scenarioPool cs) - 1
+
+isLastScenarioFromPoolCurrent :: Scenario sc => ControlSettings sc -> Bool
+isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (currentScenario cs)
 
 createTextViewLink :: TextBuffer -> TextViewUpdateListener
 createTextViewLink tBuffer = TextViewUpdateListener tBuffer
@@ -331,7 +360,8 @@ keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . readIORef) ref
                          if (keyV `elem` keysQuit ctrlSettings)
                          then lift mainQuit >> return True
                          else if (keyV `elem` keysReset ctrlSettings)
-                         then do (_, newState) <- lift $ runStateT (setScenario (initialScenario ctrlSettings)) ctrlState
+                         then do let currentScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings)
+                                 (_, newState) <- lift $ runStateT (setScenario currentScen) ctrlState
                                  lift $ putStrLn "level reset"
                                  (lift . writeIORef ref) (ctrlSettings, newState)
                                  return True
