@@ -37,17 +37,24 @@ import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 import ShiftGame.ScenarioParser
 
+displayScenarioData :: ScenarioState MatrixScenario -> IO ()
+displayScenarioData sc = do
+   putStrLn $ "player: " ++ (show . playerCoord) sc ++ " empty targets: " ++ (show . emptyTargets) sc
+   (B.putStrLn . flip showScenarioWithPlayer (playerCoord sc) . scenario) sc
+
 runParser :: ByteString -> IO (ScenarioState MatrixScenario)
-runParser levelRaw = do let possiblyParsed = parseOnly (runStateT parseScenario initParseState) levelRaw
+runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenarioCollection) initParseState) levelRaw
                         unless (isRight possiblyParsed) $
                             do guard False
                                (error . fromLeft) possiblyParsed
-                        let (myScenarioState, myParseState) = fromRight possiblyParsed
+                        let (myScenarioStates, myParseState) = fromRight possiblyParsed
+                            myScenarioState = case myScenarioStates of
+                                                   a:_ -> a
+                                                   []  -> emptyMatrixScenarioState
                         _ <- evaluate myScenarioState
                         putStrLn "warnings:"
-                        putStrLn $ (unlines . map show . warnings) myParseState
-                        putStrLn $ "player: " ++ (show . playerCoord) myScenarioState ++ " empty targets: " ++ (show . emptyTargets) myScenarioState
-                        (B.putStrLn . flip showScenarioWithPlayer (playerCoord myScenarioState) . scenario) myScenarioState
+                        putStrLn $ (unlines . map show . reverse . warnings) myParseState
+                        mapM displayScenarioData myScenarioStates
                         return myScenarioState -- todo: parse error
 
 

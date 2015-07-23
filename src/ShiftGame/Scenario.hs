@@ -15,7 +15,7 @@
 module ShiftGame.Scenario where
 
 import           Control.Monad
-import           Data.Array
+import           Data.Array as A
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B hiding(ByteString)
 import           Data.Maybe
@@ -193,6 +193,9 @@ data ScenarioState sc = ScenarioState
                         , futureMoveQueue :: [CharacterReaction] -- ^ discarded movements for undone actions,
                                                                  --   first entry is the follow-up action
                         } deriving (Eq, Show, Read)
+
+emptyMatrixScenarioState :: ScenarioState MatrixScenario
+emptyMatrixScenarioState = ScenarioState (0, 0) (MatrixScenario (A.listArray ((0,0), (0,0)) [Floor])) 0 (0, 0) [] []
 
 -- | Undo the last movement, returns the changed state or 'Nothing' if no previous action is recorded.
 undo :: Scenario sc => ScenarioState sc -> Either DenyReason (ScenarioUpdate, ScenarioState sc)

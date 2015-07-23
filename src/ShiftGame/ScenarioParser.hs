@@ -13,7 +13,7 @@
 -----------------------------------------------------------------------------
 
 module ShiftGame.ScenarioParser (
-parseScenario, ParseState(..), ParseWarning(..), initParseState
+parseScenario, parseScenarioCollection, ParseState, warnings, ParseWarning(..), initParseState
 ) where
 
 --import           Prelude hiding ((//))
@@ -24,16 +24,15 @@ import           Control.Monad.Trans
 import           Control.Monad.Trans.State.Lazy
 --import           Control.Monad.State.Lazy
 import           Data.Array  as A (array)
-import          Data.Attoparsec.ByteString as AP
+import           Data.Attoparsec.ByteString as AP
 import           Data.Attoparsec.ByteString.Char8 as APC
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
-import           Data.Maybe (fromMaybe, isNothing)
+import           Data.Maybe (fromMaybe, isNothing, catMaybes)
 import           Data.Vector as V (Vector, (!))
 import qualified Data.Vector as V hiding (Vector, (!))
 
 import ShiftGame.Scenario
-
 
 
 {-
@@ -52,12 +51,12 @@ commentSymbol :: Char
 commentSymbol = ';'
 
 -- | Warnings and errors for parsing a scenario file.
-data ParseWarning = ObjectTargetMismatch Int Int
-                  | InvalidCharacter Coord Char
-                  | NoPlayerToken
-                  | NoTarget
-                  | MultiplePlayerTokens
-                  | ScenarioEmpty
+data ParseWarning = ObjectTargetMismatch Int Int Int   -- ^ number of objects does not fit number of targets: level id, number of objects, number of targets
+                  | InvalidCharacter Int Coord Char    -- ^ unknown symbol in level file: level id, symbol position, symbol
+                  | NoPlayerToken Int                  -- ^ no player position specified in level: level id
+                  | NoTarget Int                       -- ^ no target position specified in level: level id
+                  | MultiplePlayerTokens Int           -- ^ multiple player positions specified in level: level id
+                  | ScenarioEmpty Int                  -- ^ specified scenario is empty: level id
                   deriving (Eq, Show, Read)
 
 -- | Internal state while parsing
@@ -69,36 +68,49 @@ data ParseState = ParseState
                 , freeTargets  :: Int              -- ^ current number of free target features ('Target' only)
                 , objectCount  :: Int              -- ^ current number of shiftable objects ('Object' and 'TargetX')
                 , warnings     :: [ParseWarning]   -- ^ occurred warnigns so far
+                , currentLevel :: Int
                 } deriving (Eq, Show, Read)
 
 -- | Initial empty 'ParseState'
 initParseState :: ParseState
-initParseState = ParseState [] 0 Nothing  0 0 0 []
+initParseState = ParseState [] 0 Nothing  0 0 0 [] 1
+
+-- | Reset level specific data such that a new scenario can be parsed, keeping @warnings@ and @currentLevel@.
+resetParseState :: (Monad m) => StateT ParseState m ()
+resetParseState = modify (\s -> s { linesReverse = []
+                                  , linesCount = 0
+                                  , userCoord = Nothing
+                                  , targetCount = 0
+                                  , freeTargets = 0
+                                  , objectCount = 0})
 
 -- | Parses a single 'Feature' and modifies the 'ParseState' accordingly.
 parseEntry :: Monad m => Int   -- ^ current column
                       -> Char  -- ^ character to parse
                       -> StateT ParseState m Feature
-parseEntry col ch = case ch of
-                         '#' -> return Wall
-                         '@' -> do modify setPlayer
-                                   return Floor
-                         '+' -> do modify (setPlayer . addTarget)
-                                   return Target
-                         '.' -> do modify addTarget
-                                   return Target
-                         '$' -> do modify addObject
-                                   return Object
-                         '*' -> do modify (addOccupiedTarget)
-                                   return TargetX
-                         ' ' -> return Floor
-                         _   -> do modify (\s -> s { warnings = InvalidCharacter (col, linesCount s) ch : warnings s })
-                                   return Wall
+parseEntry col ch = do
+   s <- get
+   let levelId = currentLevel s
+   case ch of
+        '#' -> return Wall
+        '@' -> do modify setPlayer
+                  return Floor
+        '+' -> do modify (setPlayer . addTarget)
+                  return Target
+        '.' -> do modify addTarget
+                  return Target
+        '$' -> do modify addObject
+                  return Object
+        '*' -> do modify (addOccupiedTarget)
+                  return TargetX
+        ' ' -> return Floor
+        _   -> do modify (\s -> s { warnings = InvalidCharacter levelId (col, linesCount s) ch : warnings s })
+                  return Wall
   where -- Add player corrdinates to state.
         setPlayer :: ParseState -> ParseState
         setPlayer s = if (isNothing . userCoord) s
                         then s { userCoord = Just (col, linesCount s) }
-                        else s { warnings = MultiplePlayerTokens : warnings s }
+                        else s { warnings = MultiplePlayerTokens (currentLevel s) : warnings s }
         -- Increment target count within state.
         addTarget :: ParseState -> ParseState
         addTarget s = s { targetCount = 1 + targetCount s, freeTargets = 1 + freeTargets s }
@@ -113,7 +125,7 @@ parseEntry col ch = case ch of
 -- | Parses a single line of a level string.
 --   Ignores empty lines.
 parseLine :: StateT ParseState Parser Bool
-parseLine = do line <- lift $ APC.takeWhile (\c -> c /= '\n' && c /= '\r') -- break on line ends
+parseLine = do line <- lift $ APC.takeWhile1 (\c -> c /= '\n' && c /= '\r') -- break on line ends
                let lineLength = B.length line
                newLine <- V.generateM lineLength (tokenParser line) -- new row vector has fitting line length
                when ((not . V.null) newLine) $ -- add row only if it is not empty
@@ -140,51 +152,63 @@ createScenarioArrayList _ _ [] = []
 
 parseTestCommentLine :: StateT ParseState Parser Bool
 parseTestCommentLine = do
-   lift $ char commentSymbol
+   _ <- lift $ char commentSymbol
    lift $ AP.skipWhile (not . isEndOfLine)
    lift $ endOfLine <|> endOfInput
    return False
 
 parseTestEmptyLine :: StateT ParseState Parser Bool
 parseTestEmptyLine = do
-   lift $ endOfInput
+   lift $ endOfLine
    return False
 
 -- | Parses string line by line and end at end of input.
 parseData :: StateT ParseState Parser ()
 parseData = do continue <- (parseTestEmptyLine <|> parseTestCommentLine <|> parseLine)
                if continue
-                 then parseData
+                 then parseData <|> lift (endOfInput >> return ())
                  else return ()
 
 -- | Parses a level string.
 --   Does not fail, the state's 'warnings' field may provide hints for the validity of the string.
 --   If no player position could be found it is set to @(0, 0)@ and the 'NoPlayerToken' warning is added.
 --   The first found player token (scanning rowwise) is selected.
-parseScenario :: StateT ParseState Parser (ScenarioState MatrixScenario)
-parseScenario = do parseData -- many $ parseLine <* lift endOfLine -- does not handle endOfInput
-                   -- sanity tests
-                   s <- get
-                   when (targetCount s /= objectCount s) $
-                       modify (\s' -> s' { warnings = ObjectTargetMismatch (objectCount s') (targetCount s') : warnings s' })
-                   s <- get
-                   when (targetCount s == 0) $
-                       modify (\s' -> s' { warnings = NoTarget : warnings s' })
-                   s <- get
-                   when ((isNothing . userCoord) s) $
-                       modify (\s' -> s' { warnings = NoPlayerToken : warnings s' })
-                   s <- get
-                   let rowCounts = map V.length (linesReverse s)
-                       rowLength = if (not . null) rowCounts then maximum rowCounts else 0
-                   when ((null . linesReverse) s) $
-                       modify (\s' -> s' { warnings = ScenarioEmpty : warnings s' })
-                   -- create scenario
-                   s <- get
-                   let rowMax = linesCount s - 1
-                       colMax = rowLength - 1
-                       arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
-                       scArray = array ((0, 0), (colMax, rowMax)) arrayList
-                   return $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s) (0, 0) [] []
+parseScenario :: StateT ParseState Parser (Maybe (ScenarioState MatrixScenario))
+parseScenario = do
+   parseData
+   s <- get
+   let levelId = currentLevel s
+   -- skip empty scenarios
+   if ((null . linesReverse) s)
+      then return Nothing
+      else do   -- Just scenario
+          -- sanity tests
+          when (targetCount s /= objectCount s) $
+             modify (\s' -> s' { warnings = ObjectTargetMismatch levelId (objectCount s') (targetCount s') : warnings s' })
+          s <- get
+          when (targetCount s == 0) $
+             modify (\s' -> s' { warnings = NoTarget levelId : warnings s' })
+          s <- get
+          when ((isNothing . userCoord) s) $
+             modify (\s' -> s' { warnings = NoPlayerToken levelId : warnings s' })
+          s <- get
+          let rowCounts = map V.length (linesReverse s)
+              rowLength = if (not . null) rowCounts then maximum rowCounts else 0
+          when (rowLength == 0) $
+             modify (\s' -> s' { warnings = ScenarioEmpty levelId : warnings s' })
+          -- create scenario
+          s <- get
+          let rowMax = linesCount s - 1
+              colMax = rowLength - 1
+              arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
+              scArray = array ((0, 0), (colMax, rowMax)) arrayList
+          modify (\s -> s { currentLevel = currentLevel s + 1 })
+          resetParseState
+          return $ Just $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s) (0, 0) [] []
 
 parseScenarioCollection :: StateT ParseState Parser [ScenarioState MatrixScenario]
-parseScenarioCollection = undefined
+parseScenarioCollection = do
+   scens <- (liftA catMaybes) $ many (parseScenario)
+   when (null scens) $
+       modify (\s' -> s' { warnings = ScenarioEmpty 0 : warnings s' })
+   return scens
