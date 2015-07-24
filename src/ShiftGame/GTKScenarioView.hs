@@ -50,6 +50,8 @@ data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (al
                                           } deriving (Eq, Show, Read)
 
 
+-- todo: keys in extra container such that movement can be ignored while other commands can still be executed (during wait for next level)
+--       disable movement after winning a level (especially after winning the last level)
 
 {-
 TextView based view
@@ -71,7 +73,7 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
       lift $ postGUIAsync (textBufferSetByteString tBuffer levelStrWithPlayer)
       return l
   notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
-  notifyWin l@(TextViewUpdateListener tBuffer) = do lift $ putStrLn "you win!" >> return l
+  notifyWin l@(TextViewUpdateListener tBuffer) = return l
 
 
 
@@ -169,7 +171,7 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
           widgetQueueDraw widget)
       return l { lowScenarioBnd = (lx,ly) }
   notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
-  notifyWin l = do lift $ putStrLn "fancy: you win!" >> return l
+  notifyWin l = return l
 
 scenarioRender :: ImagePool -> ScenarioState MatrixScenario -> Cairo.Render ()
 scenarioRender imgs scs = do
