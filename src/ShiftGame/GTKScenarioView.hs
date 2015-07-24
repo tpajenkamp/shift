@@ -15,6 +15,7 @@
 
 module ShiftGame.GTKScenarioView where
 
+import           Control.Concurrent
 import           Control.Concurrent.MVar
 import           Control.Monad
 import           Control.Monad.Trans.Class
@@ -61,13 +62,13 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
   notifyUpdate l@(TextViewUpdateListener tBuffer) _ = do
       scState <- ask -- todo: player position
       let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
-      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
+      lift $ postGUIAsync (textBufferSetByteString tBuffer levelStrWithPlayer)
       return l
   notifyNew :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
   notifyNew l@(TextViewUpdateListener tBuffer) = do
       scState <- ask -- todo: player position
       let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
-      (lift . textBufferSetByteString tBuffer) levelStrWithPlayer
+      lift $ postGUIAsync (textBufferSetByteString tBuffer levelStrWithPlayer)
       return l
   notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
   notifyWin l@(TextViewUpdateListener tBuffer) = do lift $ putStrLn "you win!" >> return l
@@ -144,27 +145,28 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
   notifyUpdate l@(CanvasUpdateListener imgs widget sfcRef lowBnd) u = do
       sfc <- lift $ readMVar sfcRef
       invalRegion <- lift $ Cairo.renderWith sfc (scenarioUpdateRender imgs u lowBnd)
-      lift $ widgetQueueDrawRegion widget invalRegion
+      lift $ postGUIAsync (widgetQueueDrawRegion widget invalRegion)
       return l
   notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
   notifyNew l@(CanvasUpdateListener imgs widget sfcRef _) = do
-      sfc <- lift $ takeMVar sfcRef
       scs <- ask
-      -- create new surface if dimension changed
-      w <- Cairo.imageSurfaceGetWidth sfc
-      h <- Cairo.imageSurfaceGetHeight sfc
       let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
           xSpan = (hx-lx + 1) * 48
           ySpan = (hy-ly + 1) * 48
+      sfc <- lift $ takeMVar sfcRef
+      -- create new surface if dimension changed
+      w <- lift $ Cairo.imageSurfaceGetWidth sfc
+      h <- lift $ Cairo.imageSurfaceGetHeight sfc
       nextSfc <- if (w /= xSpan || h /= ySpan) 
         then lift $ do newSfc <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
-                       widgetSetSizeRequest widget xSpan ySpan
                        return newSfc
         else return sfc
-      -- redraw scenario surface
-      lift $ drawScenario imgs nextSfc scs
-      lift $ putMVar sfcRef nextSfc
-      lift $ widgetQueueDraw widget
+      lift $ putMVar sfcRef nextSfc    
+      lift $ postGUIAsync (do
+          when (w /= xSpan || h /= ySpan) (widgetSetSizeRequest widget xSpan ySpan)
+          -- redraw scenario surface
+          drawScenario imgs nextSfc scs
+          widgetQueueDraw widget)
       return l { lowScenarioBnd = (lx,ly) }
   notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
   notifyWin l = do lift $ putStrLn "fancy: you win!" >> return l
@@ -346,19 +348,19 @@ instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
   notifyUpdate :: (StatusBarListener sc) -> ScenarioUpdate -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
   notifyUpdate l@(StatusBarListener bar cId) u = do
       let (steps, steps') = updatedSteps u
-      _ <- lift $ statusbarPush bar cId (show steps ++ " / " ++ show steps')
+      lift $ postGUIAsync (statusbarPush bar cId (show steps ++ " / " ++ show steps') >> return ())
       return l
   notifyNew :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
   notifyNew l@(StatusBarListener bar cId) = do
       scs <- ask
       let (steps, steps') = spentSteps scs
-      _ <- lift $ statusbarPush bar cId (show steps ++ " / " ++ show steps')
+      lift $ postGUIAsync (statusbarPush bar cId (show steps ++ " / " ++ show steps') >> return ())
       return l
   notifyWin :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
   notifyWin l@(StatusBarListener bar cId) = do
       scs <- ask
       let (steps, steps') = spentSteps scs
-      _ <- lift $ statusbarPush bar cId ("Victory! " ++ show steps ++ " / " ++ show steps')
+      lift $ postGUIAsync (statusbarPush bar cId ("Victory! " ++ show steps ++ " / " ++ show steps') >> return ())
       return l
 
 createStatusBarLink :: Scenario sc => Statusbar -> IO (StatusBarListener sc)
@@ -377,14 +379,14 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
   notifyUpdate l _ = return l
   notifyNew l = return l
   notifyWin l@(LevelProgressor sRef) = do
-     lift $ postGUIAsync (do (cs, ctrl) <- takeMVar sRef
-                             newVarContent <- case increaseScenarioId cs of
-                                  Just(cs', newScen, _) -> do
-                                     (_, newState) <- runStateT (setScenario newScen) ctrl
-                                     putStrLn "progressed to next level"
-                                     return (cs', newState)
-                                  Nothing -> putStrLn "Dark Victory!!!!" >> return (cs, ctrl)
-                             putMVar sRef newVarContent)
+     _ <- lift $ forkIO (do (cs, ctrl) <- takeMVar sRef
+                            newVarContent <- case increaseScenarioId cs of
+                                 Just (cs', newScen, _) -> do
+                                    (_, newState) <- runStateT (setScenario newScen) ctrl
+                                    putStrLn "progressed to next level"
+                                    return (cs', newState)
+                                 Nothing -> putStrLn "Dark Victory!!!!" >> return (cs, ctrl)
+                            putMVar sRef newVarContent)
      return l
 
 {-
@@ -395,43 +397,43 @@ Keyboard Listener
 -- that is the reason why an 'MVar' is used.
 -- | Processes keyboard events and determines the resulting player action.
 keyboardHandler :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (ControlSettings sc, ctrl) -> EventM EKey Bool
-keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . takeMVar) ref
+keyboardHandler ref = do var@(ctrlSettings, ctrlState) <- (lift . takeMVar) ref
                          keyV <- eventKeyVal
                          -- test to quit game
                          b <- if (keyV `elem` keysQuit ctrlSettings)
-                              then lift mainQuit >> return True
+                              then lift (putMVar ref var) >> lift mainQuit >> return True
                               else if (keyV `elem` keysReset ctrlSettings)
-                              then do let currentScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings)
-                                      (_, newState) <- lift $ runStateT (setScenario currentScen) ctrlState
-                                      lift $ putStrLn "level reset"
-                                      (lift . putMVar ref) (ctrlSettings, newState)
-                                      return True
+                              then lift $ forkIO (do
+                                     let currentScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings)
+                                     (_, newState) <- runStateT (setScenario currentScen) ctrlState
+                                     putStrLn "level reset"
+                                     putMVar ref (ctrlSettings, newState)) >> return True
                               else if (keyV `elem` keysNext ctrlSettings)
-                              then do case increaseScenarioId ctrlSettings of
-                                           Just (ctrlSettings', nextScen, _) -> do
-                                              (_, newState) <- lift $ runStateT (setScenario nextScen) ctrlState
-                                              lift $ putStrLn "next level"
-                                              (lift . putMVar ref) (ctrlSettings', newState)
-                                           Nothing -> return ()
-                                      return True
+                              then lift $ forkIO (
+                                     case increaseScenarioId ctrlSettings of
+                                          Just (ctrlSettings', nextScen, _) -> do
+                                             (_, newState) <- runStateT (setScenario nextScen) ctrlState
+                                             putStrLn "next level"
+                                             putMVar ref (ctrlSettings', newState)
+                                          Nothing -> putMVar ref var) >> return True
                               else if (keyV `elem` keysPrev ctrlSettings)
-                              then do case decreaseScenarioId ctrlSettings of
-                                           Just (ctrlSettings', prevScen, _) -> do
-                                              (_, newState) <- lift $ runStateT (setScenario prevScen) ctrlState
-                                              lift $ putStrLn "next level"
-                                              (lift . putMVar ref) (ctrlSettings', newState)
-                                           Nothing -> return ()
-                                      return True
+                              then lift $ forkIO (
+                                     case decreaseScenarioId ctrlSettings of
+                                          Just (ctrlSettings', prevScen, _) -> do
+                                             (_, newState) <- runStateT (setScenario prevScen) ctrlState
+                                             putStrLn "next level"
+                                             putMVar ref (ctrlSettings', newState)
+                                          Nothing -> putMVar ref var) >> return True
                               else if (keyV `elem` keysUndo ctrlSettings)
-                              then do (err, newState) <- lift $ runStateT undoAction ctrlState
-                                      lift $ putStrLn $ maybe "undo" ((++) "undo: " . show) err
-                                      (lift . putMVar ref) (ctrlSettings, newState)
-                                      return True
+                              then lift $ forkIO (do
+                                     (err, newState) <- runStateT undoAction ctrlState
+                                     putStrLn $ maybe "undo" ((++) "undo: " . show) err
+                                     putMVar ref (ctrlSettings, newState)) >> return True
                               else if (keyV `elem` keysRedo ctrlSettings)
-                              then do (err, newState) <- lift $ runStateT redoAction ctrlState
-                                      lift $ putStrLn $ maybe "redo" ((++) "redo: " . show) err
-                                      (lift . putMVar ref) (ctrlSettings, newState)
-                                      return True   
+                              then lift $ forkIO (do
+                                     (err, newState) <- runStateT redoAction ctrlState
+                                     putStrLn $ maybe "redo" ((++) "redo: " . show) err
+                                     putMVar ref (ctrlSettings, newState)) >> return True   
                               else do
                                   let mbPlayerAction = if keyV `elem` keysLeft ctrlSettings  then Just MLeft
                                                   else if keyV `elem` keysRight ctrlSettings then Just MRight
@@ -442,14 +444,14 @@ keyboardHandler ref = do (ctrlSettings, ctrlState) <- (lift . takeMVar) ref
                                   case mbPlayerAction of
                                        Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
                                                      return False
-                                       Just action -> do (lift . putStrLn . show) action
-                                                         (denyReason, newState) <- lift $ runStateT (runPlayerMove action) ctrlState
-                                                         case denyReason of
-                                                              Just r -> lift $ putStrLn $ show r                             -- failure
-                                                              Nothing -> (lift . putMVar ref) (ctrlSettings, newState)    -- success
-                                                         return True
-                         mvarEmpty <- (lift . isEmptyMVar) ref
-                         when mvarEmpty (lift $  putMVar ref (ctrlSettings, ctrlState))
+                                       Just action -> lift $ forkIO (do
+                                                        (putStrLn . show) action
+                                                        (denyReason, newState) <- runStateT (runPlayerMove action) ctrlState
+                                                        case denyReason of
+                                                             Just r  -> putMVar ref var >> putStrLn (show r)    -- failure
+                                                             Nothing -> putMVar ref (ctrlSettings, newState)    -- success
+                                                        ) >> return True
+                         unless b (lift $  putMVar ref var)
                          return b
 
 
