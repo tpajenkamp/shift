@@ -382,8 +382,11 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
      _ <- lift $ forkIO (do (cs, ctrl) <- takeMVar sRef
                             newVarContent <- case increaseScenarioId cs of
                                  Just (cs', newScen, _) -> do
+                                    putStrLn "shortly progressing to next level"
+                                    -- MVar is blocked, no game interaction possible during the wait
+                                    -- (if used correctly)
+                                    threadDelay 2000000
                                     (_, newState) <- runStateT (setScenario newScen) ctrl
-                                    putStrLn "progressed to next level"
                                     return (cs', newState)
                                  Nothing -> putStrLn "Dark Victory!!!!" >> return (cs, ctrl)
                             putMVar sRef newVarContent)
