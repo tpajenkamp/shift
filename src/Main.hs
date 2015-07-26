@@ -60,9 +60,9 @@ readScenario levelPath = do
    levelRaw <- catch (B.readFile levelPath) ((\e -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)::IOError -> IO ByteString)
    runParser levelRaw
 
-createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ControlSettings MatrixScenario, ctrl) -> IO ctrl
-createTextViewWindow sRef = do
-   (cs, ctrl) <- takeMVar sRef
+createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO ctrl
+createTextViewWindow sRef keyHandler = do
+   (scenSettings, ctrl) <- takeMVar sRef
    
    window <- windowNew
    vbox <- vBoxNew False 0    -- main container for window
@@ -76,17 +76,17 @@ createTextViewWindow sRef = do
    (infobar, ctrl) <- createInfoBar ctrl
    boxPackStart vbox infobar PackRepel 0
    -- add keyboard listener
-   putMVar sRef (cs, ctrl)
-   _ <- textArea `on` keyPressEvent $ keyboardHandler sRef 
+   putMVar sRef (scenSettings, ctrl)
+   _ <- textArea `on` keyPressEvent $ keyHandler
    -- finalize window
    _ <- window `on` deleteEvent $ lift mainQuit >> return False
    widgetShowAll window
    return ctrl
 
-createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ControlSettings MatrixScenario, ctrl) -> IO ctrl
-createGraphicsViewWindow sRef = do
-   (ctrlS, ctrl) <- takeMVar sRef
-   let scenState = getScenarioFromPool ctrlS (currentScenario ctrlS)
+createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO ctrl
+createGraphicsViewWindow sRef keyHandler = do
+   (scenSettings, ctrl) <- takeMVar sRef
+   let scenState = getScenarioFromPool scenSettings (currentScenario scenSettings)
 
    window2 <- windowNew
    vbox2 <- vBoxNew False 0    -- main container for window2
@@ -99,9 +99,9 @@ createGraphicsViewWindow sRef = do
    (infobar2, ctrl) <- createInfoBar ctrl
    boxPackStart vbox2 infobar2 PackRepel 0
 
-   putMVar sRef (ctrlS, ctrl)
+   putMVar sRef (scenSettings, ctrl)
 
-   _ <- canvas `on` keyPressEvent $ keyboardHandler sRef 
+   _ <- canvas `on` keyPressEvent $ keyHandler
    widgetShowAll window2
    return ctrl
 
@@ -118,12 +118,15 @@ main = do
    _ <- initGUI
    let scenState = case scenStates of [] -> emptyScenarioState; a:_ -> a
        ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
-   sRef <- newMVar (initSettings scenStates, ctrl)
-   
-   ctrl <- createTextViewWindow sRef
-   ctrl <- createGraphicsViewWindow sRef
+       (uc, sc) = initSettings scenStates
+   uRef <- newMVar uc
+   sRef <- newMVar (sc, ctrl)
+   let keyHandler = keyboardHandler uRef sRef
 
-   (_, ctrl) <- autoAdvanceLevel sRef
+   ctrl <- createTextViewWindow sRef keyHandler
+   ctrl <- createGraphicsViewWindow sRef keyHandler
+
+   (_, ctrl) <- autoAdvanceLevel uRef sRef
 
    mainGUI
 
@@ -160,25 +163,29 @@ createInfoBar ctrl = do
     ctrl' <- controllerAddListener ctrl lst
     return (infobar, ctrl')
 
-autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (ControlSettings sc, ctrl) -> IO (LevelProgressor sc ctrl, ctrl)
-autoAdvanceLevel sRef = do
-    (cs, ctrl) <- takeMVar sRef
-    let lst = LevelProgressor sRef
+autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => MVar UserInputControl -> MVar (ScenarioSettings sc, ctrl) -> IO (LevelProgressor sc ctrl, ctrl)
+autoAdvanceLevel uRef sRef = do
+    (scenSettings, ctrl) <- takeMVar sRef
+    let lst = LevelProgressor uRef sRef
     ctrl' <- controllerAddListener ctrl lst
-    putMVar sRef (cs, ctrl')
+    putMVar sRef (scenSettings, ctrl')
     return (lst, ctrl')
 
-initSettings :: Scenario sc => [ScenarioState sc] -> ControlSettings sc
-initSettings s = ControlSettings { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
-                                 , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]
-                                 , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]
-                                 , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]
-                                 , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]
-                                 , keysUndo  = map (keyFromName . stringToGlib) ["minus", "KP_Subtract"]
-                                 , keysRedo  = map (keyFromName . stringToGlib) ["plus", "KP_Add"]
-                                 , keysReset = map (keyFromName . stringToGlib) ["r", "R"]
-                                 , keysNext  = map (keyFromName . stringToGlib) ["n", "N"]
-                                 , keysPrev  = map (keyFromName . stringToGlib) ["p", "P"]
-                                 , scenarioPool    = s
-                                 , currentScenario = 0
-                                 }
+initSettings :: Scenario sc => [ScenarioState sc] -> (UserInputControl, ScenarioSettings sc)
+initSettings s = let 
+    uic = UserInputControl { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
+                           , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]
+                           , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]
+                           , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]
+                           , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]
+                           , keysUndo  = map (keyFromName . stringToGlib) ["minus", "KP_Subtract"]
+                           , keysRedo  = map (keyFromName . stringToGlib) ["plus", "KP_Add"]
+                           , keysReset = map (keyFromName . stringToGlib) ["r", "R"]
+                           , keysNext  = map (keyFromName . stringToGlib) ["n", "N"]
+                           , keysPrev  = map (keyFromName . stringToGlib) ["p", "P"]
+                           , inputMode = InputMode MovementEnabled NoChangeStalled
+                           }
+    sc = ScenarioSettings { scenarioPool    = s
+                          , currentScenario = 0
+                          }
+  in (uic, sc)

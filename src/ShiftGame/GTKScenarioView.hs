@@ -16,7 +16,6 @@
 module ShiftGame.GTKScenarioView where
 
 import           Control.Concurrent
-import           Control.Concurrent.MVar
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
@@ -35,20 +34,34 @@ import           System.FilePath (pathSeparator)
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 
-data ControlSettings sc = ControlSettings { keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
-                                          , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
-                                          , keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
-                                          , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
-                                          , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
-                                          , keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
-                                          , keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
-                                          , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
-                                          , keysNext   :: [KeyVal] -- ^ keys (alternatives) to advance to next level
-                                          , keysPrev   :: [KeyVal] -- ^ keys (alternatives) to revert to previous level
-                                          , scenarioPool    :: [ScenarioState sc] -- ^ currently loaded scenario
-                                          , currentScenario :: Int                -- ^ id of current scenario in @scenarioPool@
-                                          } deriving (Eq, Show, Read)
+-- MVar order: get (Scenario sc, ScenarioController ctrl m sc) => (MVar (ScenarioSettings sc, ctrl)) before (MVar UserInputControl) within a thread
 
+data ScenarioSettings sc = ScenarioSettings { scenarioPool    :: [ScenarioState sc] -- ^ loaded scenarios
+                                            , currentScenario :: Int                -- ^ id of current scenario in @scenarioPool@
+                                            } deriving (Eq, Show, Read)
+
+data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Show, Read, Enum)
+
+-- | When a scenario change is scheduled, stores the thread id of the stalling thread.
+--   The thread should only execute the scheduled switch if the thread id remains the same when the change is due.
+data ScenarioChangeMode = NoChangeStalled | ChangeStalled { stallingThreadId :: ThreadId } deriving (Eq, Show)
+
+data InputMode = InputMode { movementMode :: MovementMode
+                           , scenarioChangeMode :: ScenarioChangeMode
+                           } deriving (Eq, Show)
+
+data UserInputControl = UserInputControl { keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
+                                         , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
+                                         , keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
+                                         , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
+                                         , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
+                                         , keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
+                                         , keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
+                                         , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
+                                         , keysNext   :: [KeyVal] -- ^ keys (alternatives) to advance to next level
+                                         , keysPrev   :: [KeyVal] -- ^ keys (alternatives) to revert to previous level
+                                         , inputMode :: InputMode -- ^ what user interactions are currently possible
+                                         } deriving (Eq, Show)
 
 -- todo: keys in extra container such that movement can be ignored while other commands can still be executed (during wait for next level)
 --       disable movement after winning a level (especially after winning the last level)
@@ -77,48 +90,48 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
 
 
 
-setScenarioPool :: Scenario sc => ControlSettings sc -> [ScenarioState sc] -> ControlSettings sc
+setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> ScenarioSettings sc
 setScenarioPool cs s = cs { scenarioPool = s }
 
-setCurrentScenario :: Scenario sc => ControlSettings sc -> Int -> Maybe (ControlSettings sc)
+setCurrentScenario :: Scenario sc => ScenarioSettings sc -> Int -> Maybe (ScenarioSettings sc)
 setCurrentScenario cs sId =
   if (sId > 0 && sId <= length (scenarioPool cs))
     then Just $ cs { currentScenario = sId}
     else Nothing
 
-getScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> ScenarioState sc
+getScenarioFromPool :: Scenario sc => ScenarioSettings sc -> Int -> ScenarioState sc
 getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
                               then scenarioPool cs !! sId
                               else emptyScenarioState
 
-getScenarioFromPoolMaybe :: Scenario sc => ControlSettings sc -> Int -> Maybe (ScenarioState sc)
+getScenarioFromPoolMaybe :: Scenario sc => ScenarioSettings sc -> Int -> Maybe (ScenarioState sc)
 getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
                                    then Just $ scenarioPool cs !! sId
                                    else Nothing
 
-increaseScenarioId :: Scenario sc => ControlSettings sc -> Maybe (ControlSettings sc, ScenarioState sc, Int)
+increaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, Int)
 increaseScenarioId cs = let currentScenarioId = currentScenario cs
    in if isLastScenarioFromPool cs currentScenarioId
         then Nothing
         else Just (cs { currentScenario = currentScenarioId + 1 }, scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
 
-decreaseScenarioId :: Scenario sc => ControlSettings sc -> Maybe (ControlSettings sc, ScenarioState sc, Int)
+decreaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, Int)
 decreaseScenarioId cs = let currentScenarioId = currentScenario cs
    in if isFirstScenarioFromPool cs currentScenarioId
         then Nothing
         else Just (cs { currentScenario = currentScenarioId - 1 }, scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
 
 
-isFirstScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> Bool
+isFirstScenarioFromPool :: Scenario sc => ScenarioSettings sc -> Int -> Bool
 isFirstScenarioFromPool cs sId = sId <= 0
 
-isFirstScenarioFromPoolCurrent :: Scenario sc => ControlSettings sc-> Bool
+isFirstScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc-> Bool
 isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario cs)
 
-isLastScenarioFromPool :: Scenario sc => ControlSettings sc -> Int -> Bool
+isLastScenarioFromPool :: Scenario sc => ScenarioSettings sc -> Int -> Bool
 isLastScenarioFromPool cs sId = sId >= length (scenarioPool cs) - 1
 
-isLastScenarioFromPoolCurrent :: Scenario sc => ControlSettings sc -> Bool
+isLastScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc -> Bool
 isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (currentScenario cs)
 
 createTextViewLink :: TextBuffer -> TextViewUpdateListener
@@ -375,23 +388,35 @@ Next level switcher
 Automatically switch to next level on win event
 -}
 
-data LevelProgressor sc ctrl = LevelProgressor (MVar (ControlSettings sc, ctrl))
+
+-- | @UpdateListener@ to automatically advance to the next level when a scenario is won.
+--   
+--   @MVar (ScenarioSettings sc, ctrl)@ is always acquired before @MVar UserInputControl@
+data LevelProgressor sc ctrl = LevelProgressor (MVar UserInputControl) (MVar (ScenarioSettings sc, ctrl))
 
 instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelProgressor sc ctrl) IO sc where
   notifyUpdate l _ = return l
   notifyNew l = return l
-  notifyWin l@(LevelProgressor sRef) = do
-     _ <- lift $ forkIO (do (cs, ctrl) <- takeMVar sRef
-                            newVarContent <- case increaseScenarioId cs of
-                                 Just (cs', newScen, _) -> do
-                                    putStrLn "shortly progressing to next level"
-                                    -- MVar is blocked, no game interaction possible during the wait
-                                    -- (if used correctly)
-                                    threadDelay 2000000
-                                    (_, newState) <- runStateT (setScenario newScen) ctrl
-                                    return (cs', newState)
-                                 Nothing -> putStrLn "Dark Victory!!!!" >> return (cs, ctrl)
-                            putMVar sRef newVarContent)
+  notifyWin l@(LevelProgressor uRef sRef) = do
+     --uic <- takeMVar uRef
+     newThreadId <- lift $ forkIO (do
+        var@(cs, ctrl) <- takeMVar sRef
+        -- uic' <- takeMVar uRef
+        -- me <- myThreadId
+        newVarContent <- case increaseScenarioId cs of
+                              Just (cs', newScen, _) -> do
+                                  putStrLn "shortly progressing to next level"
+                                  -- MVar is blocked, no game interaction possible during the wait
+                                  -- (if used correctly)
+                                  threadDelay 2000000
+                                  (_, newState) <- runStateT (setScenario newScen) ctrl
+                                  return (cs', newState)
+                              Nothing -> do
+                                  putStrLn "Dark Victory!!!!" >> return (cs, ctrl)
+            --putMVar uRef (uic' { inputMode = InputMode MovementDisabled NoChangeStalled }}
+        putMVar sRef newVarContent
+        )
+     --putMVar uRef (uic { inputMode = InputMode MovementDisabled (ChangeStalled newThreadId) })
      return l
 
 {-
@@ -401,63 +426,78 @@ Keyboard Listener
 -- implementation detaiol: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
 -- that is the reason why an 'MVar' is used.
 -- | Processes keyboard events and determines the resulting player action.
-keyboardHandler :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (ControlSettings sc, ctrl) -> EventM EKey Bool
-keyboardHandler ref = do var@(ctrlSettings, ctrlState) <- (lift . takeMVar) ref
-                         keyV <- eventKeyVal
-                         -- test to quit game
-                         b <- if (keyV `elem` keysQuit ctrlSettings)
-                              then lift (putMVar ref var) >> lift mainQuit >> return True
-                              else if (keyV `elem` keysReset ctrlSettings)
-                              then lift $ forkIO (do
-                                     let currentScen = getScenarioFromPool ctrlSettings (currentScenario ctrlSettings)
-                                     (_, newState) <- runStateT (setScenario currentScen) ctrlState
-                                     putStrLn "level reset"
-                                     putMVar ref (ctrlSettings, newState)) >> return True
-                              else if (keyV `elem` keysNext ctrlSettings)
-                              then lift $ forkIO (
-                                     case increaseScenarioId ctrlSettings of
-                                          Just (ctrlSettings', nextScen, _) -> do
-                                             (_, newState) <- runStateT (setScenario nextScen) ctrlState
-                                             putStrLn "next level"
-                                             putMVar ref (ctrlSettings', newState)
-                                          Nothing -> putMVar ref var) >> return True
-                              else if (keyV `elem` keysPrev ctrlSettings)
-                              then lift $ forkIO (
-                                     case decreaseScenarioId ctrlSettings of
-                                          Just (ctrlSettings', prevScen, _) -> do
-                                             (_, newState) <- runStateT (setScenario prevScen) ctrlState
-                                             putStrLn "next level"
-                                             putMVar ref (ctrlSettings', newState)
-                                          Nothing -> putMVar ref var) >> return True
-                              else if (keyV `elem` keysUndo ctrlSettings)
-                              then lift $ forkIO (do
-                                     (err, newState) <- runStateT undoAction ctrlState
-                                     putStrLn $ maybe "undo" ((++) "undo: " . show) err
-                                     putMVar ref (ctrlSettings, newState)) >> return True
-                              else if (keyV `elem` keysRedo ctrlSettings)
-                              then lift $ forkIO (do
-                                     (err, newState) <- runStateT redoAction ctrlState
-                                     putStrLn $ maybe "redo" ((++) "redo: " . show) err
-                                     putMVar ref (ctrlSettings, newState)) >> return True   
-                              else do
-                                  let mbPlayerAction = if keyV `elem` keysLeft ctrlSettings  then Just MLeft
-                                                  else if keyV `elem` keysRight ctrlSettings then Just MRight
-                                                  else if keyV `elem` keysUp ctrlSettings    then Just MUp
-                                                  else if keyV `elem` keysDown ctrlSettings  then Just MDown
-                                                  else Nothing
-                                   -- run controller
-                                  case mbPlayerAction of
-                                       Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
-                                                     return False
-                                       Just action -> lift $ forkIO (do
-                                                        (putStrLn . show) action
-                                                        (denyReason, newState) <- runStateT (runPlayerMove action) ctrlState
-                                                        case denyReason of
-                                                             Just r  -> putMVar ref var >> putStrLn (show r)    -- failure
-                                                             Nothing -> putMVar ref (ctrlSettings, newState)    -- success
-                                                        ) >> return True
-                         unless b (lift $  putMVar ref var)
-                         return b
+keyboardHandler :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (UserInputControl) -> MVar (ScenarioSettings sc, ctrl) -> EventM EKey Bool
+keyboardHandler uRef sRef = do 
+    keySettings <- (lift . readMVar) uRef
+    keyV <- eventKeyVal
+    -- test to quit game
+    b <- if (keyV `elem` keysQuit keySettings)
+      then lift mainQuit >> return True
+      -- reset current level
+      else if (keyV `elem` keysReset keySettings)
+      then lift $ forkIO (do
+             (scenSettings, ctrl) <- takeMVar sRef
+             let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
+             (_, ctrl') <- runStateT (setScenario currentScen) ctrl
+             putStrLn "level reset"
+             putMVar sRef (scenSettings, ctrl')) >> return True
+      -- set next level in pool
+      else if (keyV `elem` keysNext keySettings)
+      then lift $ forkIO (do
+             var@(scenSettings, ctrl) <- takeMVar sRef
+             case increaseScenarioId scenSettings of
+                  Just (scenSettings', nextScen, _) -> do
+                     (_, ctrl') <- runStateT (setScenario nextScen) ctrl
+                     putStrLn "next level"
+                     putMVar sRef (scenSettings', ctrl')
+                  Nothing -> putMVar sRef var) >> return True
+      -- set previous level in pool
+      else if (keyV `elem` keysPrev keySettings)
+      then lift $ forkIO (do
+             var@(scenSettings, ctrl) <- takeMVar sRef
+             case decreaseScenarioId scenSettings of
+                  Just (scenSettings', prevScen, _) -> do
+                     (_, ctrl') <- runStateT (setScenario prevScen) ctrl
+                     putStrLn "next level"
+                     putMVar sRef (scenSettings', ctrl')
+                  Nothing -> (putMVar sRef var)) >> return True
+      -- undo last move
+      else if (keyV `elem` keysUndo keySettings)
+      then lift $ forkIO (do
+             (scenSettings, ctrl) <- takeMVar sRef
+             (err, ctrl') <- runStateT undoAction ctrl
+             putStrLn $ maybe "undo" ((++) "undo: " . show) err
+             putMVar sRef (scenSettings, ctrl')) >> return True
+      -- redo last undo
+      else if (keyV `elem` keysRedo keySettings)
+      then lift $ forkIO (do
+             (scenSettings, ctrl) <- takeMVar sRef
+             (err, ctrl') <- runStateT redoAction ctrl
+             putStrLn $ maybe "redo" ((++) "redo: " . show) err
+             putMVar sRef (scenSettings, ctrl')) >> return True 
+      -- player movement
+      else do
+          let mbPlayerAction = if keyV `elem` keysLeft keySettings  then Just MLeft
+                          else if keyV `elem` keysRight keySettings then Just MRight
+                          else if keyV `elem` keysUp keySettings    then Just MUp
+                          else if keyV `elem` keysDown keySettings  then Just MDown
+                          else Nothing
+           -- run controller
+          case mbPlayerAction of
+               Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
+                             return False
+               Just action -> do
+                 when ((movementMode . inputMode) keySettings == MovementEnabled) $
+                        lift $ forkIO (do
+                          (scenSettings, ctrl) <- takeMVar sRef
+                          (putStrLn . show) action
+                          (denyReason, ctrl') <- runStateT (runPlayerMove action) ctrl
+                          case denyReason of
+                               Just r  -> putMVar sRef (scenSettings, ctrl') >> putStrLn (show r)    -- failure
+                               Nothing -> putMVar sRef (scenSettings, ctrl')    -- success
+                        ) >> return ()
+                 return True
+    return b
 
 
                          
