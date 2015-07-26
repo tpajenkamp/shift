@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, InstanceSigs #-}
+{-# LANGUAGE BangPatterns, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, InstanceSigs, TemplateHaskell #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.GTKScenarioView
@@ -16,6 +16,7 @@
 module ShiftGame.GTKScenarioView where
 
 import           Control.Concurrent
+import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
@@ -26,7 +27,7 @@ import           Data.Maybe
 import           Graphics.Rendering.Cairo (liftIO)
 import qualified Graphics.Rendering.Cairo as Cairo
 import qualified Graphics.Rendering.Cairo.Internal as Cairo (surfaceStatus)
-import           Graphics.UI.Gtk hiding (get, rectangle)
+import           Graphics.UI.Gtk hiding (get, set, rectangle)
 import           System.Directory (doesFileExist)
 import           System.FilePath (pathSeparator)
 
@@ -36,9 +37,10 @@ import ShiftGame.ScenarioController
 
 -- MVar order: get (Scenario sc, ScenarioController ctrl m sc) => (MVar (ScenarioSettings sc, ctrl)) before (MVar UserInputControl) within a thread
 
-data ScenarioSettings sc = ScenarioSettings { scenarioPool    :: [ScenarioState sc] -- ^ loaded scenarios
-                                            , currentScenario :: Int                -- ^ id of current scenario in @scenarioPool@
+data ScenarioSettings sc = ScenarioSettings { _scenarioPool    :: [ScenarioState sc] -- ^ loaded scenarios
+                                            , _currentScenario :: Int                -- ^ id of current scenario in @scenarioPool@
                                             } deriving (Eq, Show, Read)
+$(makeLenses ''ScenarioSettings)
 
 data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Show, Read, Enum)
 
@@ -46,22 +48,24 @@ data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Sh
 --   The thread should only execute the scheduled switch if the thread id remains the same when the change is due.
 data ScenarioChangeMode = NoChangeStalled | ChangeStalled { stallingThreadId :: ThreadId } deriving (Eq, Show)
 
-data InputMode = InputMode { movementMode :: MovementMode
-                           , scenarioChangeMode :: ScenarioChangeMode
+data InputMode = InputMode { _movementMode :: MovementMode
+                           , _scenarioChangeMode :: ScenarioChangeMode
                            } deriving (Eq, Show)
+$(makeLenses ''InputMode)
 
-data UserInputControl = UserInputControl { keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
-                                         , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
-                                         , keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
-                                         , keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
-                                         , keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
-                                         , keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
-                                         , keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
-                                         , keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
-                                         , keysNext   :: [KeyVal] -- ^ keys (alternatives) to advance to next level
-                                         , keysPrev   :: [KeyVal] -- ^ keys (alternatives) to revert to previous level
-                                         , inputMode :: InputMode -- ^ what user interactions are currently possible
+data UserInputControl = UserInputControl { _keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
+                                         , _keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
+                                         , _keysUp     :: [KeyVal] -- ^ keys (alternatives) to trigger an "up" movement
+                                         , _keysDown   :: [KeyVal] -- ^ keys (alternatives) to trigger a "down" movement
+                                         , _keysQuit   :: [KeyVal] -- ^ keys (alternatives) to exit the game
+                                         , _keysUndo   :: [KeyVal] -- ^ keys (alternatives) to undo a single step
+                                         , _keysRedo   :: [KeyVal] -- ^ keys (alternatives) to redo a single step
+                                         , _keysReset  :: [KeyVal] -- ^ keys (alternatives) to restart the level
+                                         , _keysNext   :: [KeyVal] -- ^ keys (alternatives) to advance to next level
+                                         , _keysPrev   :: [KeyVal] -- ^ keys (alternatives) to revert to previous level
+                                         , _inputMode :: InputMode -- ^ what user interactions are currently possible
                                          } deriving (Eq, Show)
+$(makeLenses ''UserInputControl)
 
 -- todo: keys in extra container such that movement can be ignored while other commands can still be executed (during wait for next level)
 --       disable movement after winning a level (especially after winning the last level)
@@ -76,13 +80,13 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
   notifyUpdate :: TextViewUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
   notifyUpdate l@(TextViewUpdateListener tBuffer) _ = do
       scState <- ask -- todo: player position
-      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
+      let levelStrWithPlayer = showScenarioWithPlayer (view scenario scState) (view playerCoord scState)
       lift $ postGUIAsync (textBufferSetByteString tBuffer levelStrWithPlayer)
       return l
   notifyNew :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
   notifyNew l@(TextViewUpdateListener tBuffer) = do
       scState <- ask -- todo: player position
-      let levelStrWithPlayer = showScenarioWithPlayer (scenario scState) (playerCoord scState)
+      let levelStrWithPlayer = showScenarioWithPlayer (view scenario scState) (view playerCoord scState)
       lift $ postGUIAsync (textBufferSetByteString tBuffer levelStrWithPlayer)
       return l
   notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
@@ -91,48 +95,48 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
 
 
 setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> ScenarioSettings sc
-setScenarioPool cs s = cs { scenarioPool = s }
+setScenarioPool cs s = set scenarioPool s cs
 
 setCurrentScenario :: Scenario sc => ScenarioSettings sc -> Int -> Maybe (ScenarioSettings sc)
 setCurrentScenario cs sId =
-  if (sId > 0 && sId <= length (scenarioPool cs))
-    then Just $ cs { currentScenario = sId}
+  if (sId > 0 && sId <= length (view scenarioPool cs))
+    then Just $ set currentScenario sId cs
     else Nothing
 
 getScenarioFromPool :: Scenario sc => ScenarioSettings sc -> Int -> ScenarioState sc
-getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
-                              then scenarioPool cs !! sId
+getScenarioFromPool cs sId = if (sId >= 0 && sId < length (view scenarioPool cs))
+                              then view scenarioPool cs !! sId
                               else emptyScenarioState
 
 getScenarioFromPoolMaybe :: Scenario sc => ScenarioSettings sc -> Int -> Maybe (ScenarioState sc)
-getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
-                                   then Just $ scenarioPool cs !! sId
+getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (view scenarioPool cs))
+                                   then Just $ view scenarioPool cs !! sId
                                    else Nothing
 
 increaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, Int)
-increaseScenarioId cs = let currentScenarioId = currentScenario cs
+increaseScenarioId cs = let currentScenarioId = view currentScenario cs
    in if isLastScenarioFromPool cs currentScenarioId
         then Nothing
-        else Just (cs { currentScenario = currentScenarioId + 1 }, scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
+        else Just (cs & currentScenario .~ currentScenarioId + 1, view scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
 
 decreaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, Int)
-decreaseScenarioId cs = let currentScenarioId = currentScenario cs
+decreaseScenarioId cs = let currentScenarioId = view currentScenario cs
    in if isFirstScenarioFromPool cs currentScenarioId
         then Nothing
-        else Just (cs { currentScenario = currentScenarioId - 1 }, scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
+        else Just (cs & currentScenario .~ currentScenarioId - 1, view scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
 
 
 isFirstScenarioFromPool :: Scenario sc => ScenarioSettings sc -> Int -> Bool
 isFirstScenarioFromPool cs sId = sId <= 0
 
 isFirstScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc-> Bool
-isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario cs)
+isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (view currentScenario cs)
 
 isLastScenarioFromPool :: Scenario sc => ScenarioSettings sc -> Int -> Bool
-isLastScenarioFromPool cs sId = sId >= length (scenarioPool cs) - 1
+isLastScenarioFromPool cs sId = sId >= length (view scenarioPool cs) - 1
 
 isLastScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc -> Bool
-isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (currentScenario cs)
+isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (view currentScenario cs)
 
 createTextViewLink :: TextBuffer -> TextViewUpdateListener
 createTextViewLink tBuffer = TextViewUpdateListener tBuffer
@@ -144,16 +148,18 @@ createTextViewLink tBuffer = TextViewUpdateListener tBuffer
 Graphics View
 -}
 
-data ImagePool = ImagePool { featureMap :: M.Map Feature Cairo.Surface -- ^ map containing images for raw features
-                           , playerMap  :: M.Map Feature Cairo.Surface -- ^ map containing images for player onto feature, if special
-                           , playerImg  :: Cairo.Surface               -- ^ player image to draw onto feature if not contained in playerMap
+data ImagePool = ImagePool { _featureMap :: M.Map Feature Cairo.Surface -- ^ map containing images for raw features
+                           , _playerMap  :: M.Map Feature Cairo.Surface -- ^ map containing images for player onto feature, if special
+                           , _playerImg  :: Cairo.Surface               -- ^ player image to draw onto feature if not contained in playerMap
                            }
+$(makeLenses ''ImagePool)
 
-data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool            -- ^ Available images to draw onto canvas
-                                                 , drawCanvas     :: DrawingArea          -- ^ Connected @DrawingArea@ serving as canvas
-                                                 , surfaceRef     :: MVar Cairo.Surface  -- ^ Reference to Cairo image of currently drawed scenario
-                                                 , lowScenarioBnd :: (Int, Int)           -- ^ Lower (x, y) bounds of current scenario
+data CanvasUpdateListener = CanvasUpdateListener { _bufferedImages :: ImagePool            -- ^ Available images to draw onto canvas
+                                                 , _drawCanvas     :: DrawingArea          -- ^ Connected @DrawingArea@ serving as canvas
+                                                 , _surfaceRef     :: MVar Cairo.Surface  -- ^ Reference to Cairo image of currently drawed scenario
+                                                 , _lowScenarioBnd :: (Int, Int)           -- ^ Lower (x, y) bounds of current scenario
                                                  }
+$(makeLenses ''CanvasUpdateListener)
 
 instance UpdateListener CanvasUpdateListener IO MatrixScenario where
   notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
@@ -165,7 +171,7 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
   notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
   notifyNew l@(CanvasUpdateListener imgs widget sfcRef _) = do
       scs <- ask
-      let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+      let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (view scenario scs)
           xSpan = (hx-lx + 1) * 48
           ySpan = (hy-ly + 1) * 48
       sfc <- lift $ takeMVar sfcRef
@@ -182,7 +188,7 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
           -- redraw scenario surface
           drawScenario imgs nextSfc scs
           widgetQueueDraw widget)
-      return l { lowScenarioBnd = (lx,ly) }
+      return $ set lowScenarioBnd (lx,ly) l
   notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
   notifyWin l = return l
 
@@ -194,12 +200,12 @@ scenarioRender imgs scs = do
     Cairo.setSourceRGB 1.0 0.0 1.0
     Cairo.fill
     -- paint scenario map
-    let (l@(lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+    let (l@(lx,ly), (hx, hy)) = getMatrixScenarioBounds (view scenario scs)
     sequence_ $ map (drawFeature l) [(x, y) | x <- [lx..hx], y <- [ly..hy]]
     -- paint player
-    drawPlayer l (playerCoord scs)
+    drawPlayer l (view playerCoord scs)
   where drawFeature :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
-        drawFeature (lx, ly) c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
+        drawFeature (lx, ly) c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (view scenario scs) c) (view featureMap imgs) of
             Just sfc -> let xc = (fromIntegral (x - lx)) * 48
                             yc = (fromIntegral (y - ly)) * 48
                         in do w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth sfc  :: Cairo.Render Double
@@ -211,9 +217,9 @@ scenarioRender imgs scs = do
         drawPlayer (lx, ly) c@(x, y) =
             let xc = (fromIntegral (x - lx)) * 48
                 yc = (fromIntegral (y - ly)) * 48
-            in do img <- case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
+            in do img <- case M.lookup (fromMaybe Wall $ getFeature (view scenario scs) c) (view playerMap imgs) of
                               Just sfc -> return sfc
-                              Nothing -> return (playerImg imgs)
+                              Nothing -> return (view playerImg imgs)
                   w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth img  :: Cairo.Render Double
                   h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight img :: Cairo.Render Double
                   Cairo.save >> Cairo.rectangle xc yc (min 48 w) (min 48 h) >> Cairo.clip
@@ -226,9 +232,9 @@ scenarioUpdateRender :: ImagePool                    -- ^ single sprites
                      -> Cairo.Render (Cairo.Region)
 scenarioUpdateRender imgs u (lx, ly) = do
     -- overpaint given coordinates
-    let pc = newPlayerCoord u
+    let pc = view newPlayerCoord u
         -- find current player position in update list
-        (pCoord, pNotCoord) = partition (\(c, _) -> c == pc) (changedFeatures u)
+        (pCoord, pNotCoord) = partition (\(c, _) -> c == pc) (view changedFeatures u)
     inval  <- sequence $ map drawFeature pNotCoord
     inval' <- sequence $ map drawPlayer pCoord
     Cairo.regionCreateRectangles (inval ++ inval')
@@ -238,7 +244,7 @@ scenarioUpdateRender imgs u (lx, ly) = do
                 yc = (y - ly) * 48
                 xcd = fromIntegral xc :: Double
                 ycd = fromIntegral yc :: Double
-            case M.lookup ft (featureMap imgs) of
+            case M.lookup ft (view featureMap imgs) of
                  Just sfc -> do w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth sfc  :: Cairo.Render Double
                                 h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight sfc :: Cairo.Render Double
                                 Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
@@ -251,11 +257,11 @@ scenarioUpdateRender imgs u (lx, ly) = do
                 yc = (y - ly) * 48
                 xcd = fromIntegral xc
                 ycd = fromIntegral yc
-            img <- case M.lookup ft (playerMap imgs) of
+            img <- case M.lookup ft (view playerMap imgs) of
                         -- draw combined "Feature+Player" image, if available
                         Just sfc -> return sfc
                         -- draw raw feature and paint player image on top
-                        Nothing -> drawFeature item >> return (playerImg imgs)
+                        Nothing -> drawFeature item >> return (view playerImg imgs)
             w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth img  :: Cairo.Render Double
             h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight img :: Cairo.Render Double
             Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
@@ -342,7 +348,7 @@ copyScenarioToSurface mapSurfaceRef = do
 
 createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO CanvasUpdateListener
 createCanvasViewLink imgs drawin scs = do
-    let sc = scenario scs
+    let sc = view scenario scs
         ((lx,ly), (hx, hy)) = getMatrixScenarioBounds sc
         xSpan = (hx-lx + 1) * 48
         ySpan = (hy-ly + 1) * 48
@@ -362,19 +368,19 @@ data StatusBarListener sc = StatusBarListener Statusbar ContextId
 instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
   notifyUpdate :: (StatusBarListener sc) -> ScenarioUpdate -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
   notifyUpdate l@(StatusBarListener bar cId) u = do
-      let (steps, steps') = updatedSteps u
+      let (steps, steps') = view updatedSteps u
       lift $ postGUIAsync (statusbarPush bar cId (show steps ++ " / " ++ show steps') >> return ())
       return l
   notifyNew :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
   notifyNew l@(StatusBarListener bar cId) = do
       scs <- ask
-      let (steps, steps') = spentSteps scs
+      let (steps, steps') = view spentSteps scs
       lift $ postGUIAsync (statusbarPush bar cId (show steps ++ " / " ++ show steps') >> return ())
       return l
   notifyWin :: (StatusBarListener sc) -> ReaderT (ScenarioState sc) IO (StatusBarListener sc)
   notifyWin l@(StatusBarListener bar cId) = do
       scs <- ask
-      let (steps, steps') = spentSteps scs
+      let (steps, steps') = view spentSteps scs
       lift $ postGUIAsync (statusbarPush bar cId ("Victory! " ++ show steps ++ " / " ++ show steps') >> return ())
       return l
 
@@ -431,18 +437,18 @@ keyboardHandler uRef sRef = do
     keySettings <- (lift . readMVar) uRef
     keyV <- eventKeyVal
     -- test to quit game
-    b <- if (keyV `elem` keysQuit keySettings)
+    b <- if (keyV `elem` view keysQuit keySettings)
       then lift mainQuit >> return True
       -- reset current level
-      else if (keyV `elem` keysReset keySettings)
+      else if (keyV `elem` view keysReset keySettings)
       then lift $ forkIO (do
              (scenSettings, ctrl) <- takeMVar sRef
-             let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
+             let currentScen = getScenarioFromPool scenSettings (view currentScenario scenSettings)
              (_, ctrl') <- runStateT (setScenario currentScen) ctrl
              putStrLn "level reset"
              putMVar sRef (scenSettings, ctrl')) >> return True
       -- set next level in pool
-      else if (keyV `elem` keysNext keySettings)
+      else if (keyV `elem` view keysNext keySettings)
       then lift $ forkIO (do
              var@(scenSettings, ctrl) <- takeMVar sRef
              case increaseScenarioId scenSettings of
@@ -452,7 +458,7 @@ keyboardHandler uRef sRef = do
                      putMVar sRef (scenSettings', ctrl')
                   Nothing -> putMVar sRef var) >> return True
       -- set previous level in pool
-      else if (keyV `elem` keysPrev keySettings)
+      else if (keyV `elem` view keysPrev keySettings)
       then lift $ forkIO (do
              var@(scenSettings, ctrl) <- takeMVar sRef
              case decreaseScenarioId scenSettings of
@@ -462,14 +468,14 @@ keyboardHandler uRef sRef = do
                      putMVar sRef (scenSettings', ctrl')
                   Nothing -> (putMVar sRef var)) >> return True
       -- undo last move
-      else if (keyV `elem` keysUndo keySettings)
+      else if (keyV `elem` view keysUndo keySettings)
       then lift $ forkIO (do
              (scenSettings, ctrl) <- takeMVar sRef
              (err, ctrl') <- runStateT undoAction ctrl
              putStrLn $ maybe "undo" ((++) "undo: " . show) err
              putMVar sRef (scenSettings, ctrl')) >> return True
       -- redo last undo
-      else if (keyV `elem` keysRedo keySettings)
+      else if (keyV `elem` view keysRedo keySettings)
       then lift $ forkIO (do
              (scenSettings, ctrl) <- takeMVar sRef
              (err, ctrl') <- runStateT redoAction ctrl
@@ -477,17 +483,17 @@ keyboardHandler uRef sRef = do
              putMVar sRef (scenSettings, ctrl')) >> return True 
       -- player movement
       else do
-          let mbPlayerAction = if keyV `elem` keysLeft keySettings  then Just MLeft
-                          else if keyV `elem` keysRight keySettings then Just MRight
-                          else if keyV `elem` keysUp keySettings    then Just MUp
-                          else if keyV `elem` keysDown keySettings  then Just MDown
+          let mbPlayerAction = if keyV `elem` view keysLeft keySettings  then Just MLeft
+                          else if keyV `elem` view keysRight keySettings then Just MRight
+                          else if keyV `elem` view keysUp keySettings    then Just MUp
+                          else if keyV `elem` view keysDown keySettings  then Just MDown
                           else Nothing
            -- run controller
           case mbPlayerAction of
                Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
                              return False
                Just action -> do
-                 when ((movementMode . inputMode) keySettings == MovementEnabled) $
+                 when (view (inputMode . movementMode) keySettings == MovementEnabled) $
                         lift $ forkIO (do
                           (scenSettings, ctrl) <- takeMVar sRef
                           (putStrLn . show) action
