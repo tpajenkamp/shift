@@ -32,7 +32,7 @@ import           System.Environment
 import           System.FilePath (pathSeparator)
 import           System.Glib.UTFString
 
-
+import LensNaming
 import ShiftGame.Helpers
 import ShiftGame.GTKScenarioView
 import ShiftGame.Scenario
@@ -41,8 +41,8 @@ import ShiftGame.ScenarioParser
 
 displayScenarioData :: ScenarioState MatrixScenario -> IO ()
 displayScenarioData sc = do
-   putStrLn $ "player: " ++ (show . view playerCoord) sc ++ " empty targets: " ++ (show . view emptyTargets) sc
-   (B.putStrLn . flip showScenarioWithPlayer (view playerCoord sc) . view scenario) sc
+   putStrLn $ "player: " ++ (show . playerCoord) sc ++ " empty targets: " ++ (show . emptyTargets) sc
+   (B.putStrLn . flip showScenarioWithPlayer (playerCoord sc) . scenario) sc
 
 runParser :: ByteString -> IO [ScenarioState MatrixScenario]
 runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenarioCollection) initParseState) levelRaw
@@ -88,7 +88,7 @@ createTextViewWindow sRef keyHandler = do
 createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO ctrl
 createGraphicsViewWindow sRef keyHandler = do
    (scenSettings, ctrl) <- takeMVar sRef
-   let scenState = getScenarioFromPool scenSettings (view currentScenario scenSettings)
+   let scenState = getScenarioFromPool scenSettings (currentScenario scenSettings)
 
    window2 <- windowNew
    vbox2 <- vBoxNew False 0    -- main container for window2
@@ -175,19 +175,19 @@ autoAdvanceLevel uRef sRef = do
 
 initSettings :: Scenario sc => [ScenarioState sc] -> (UserInputControl, ScenarioSettings sc)
 initSettings s = let 
-    uic = UserInputControl { _keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
-                           , _keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]
-                           , _keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]
-                           , _keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]
-                           , _keysQuit  = map (keyFromName . stringToGlib) ["Escape"]
-                           , _keysUndo  = map (keyFromName . stringToGlib) ["minus", "KP_Subtract"]
-                           , _keysRedo  = map (keyFromName . stringToGlib) ["plus", "KP_Add"]
-                           , _keysReset = map (keyFromName . stringToGlib) ["r", "R"]
-                           , _keysNext  = map (keyFromName . stringToGlib) ["n", "N"]
-                           , _keysPrev  = map (keyFromName . stringToGlib) ["p", "P"]
-                           , _inputMode = InputMode MovementEnabled NoChangeStalled
+    uic = UserInputControl { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
+                           , keysRight = map (keyFromName . stringToGlib) ["Right", "d", "D"]
+                           , keysUp    = map (keyFromName . stringToGlib) ["Up", "w", "W"]
+                           , keysDown  = map (keyFromName . stringToGlib) ["Down", "s", "S"]
+                           , keysQuit  = map (keyFromName . stringToGlib) ["Escape"]
+                           , keysUndo  = map (keyFromName . stringToGlib) ["minus", "KP_Subtract"]
+                           , keysRedo  = map (keyFromName . stringToGlib) ["plus", "KP_Add"]
+                           , keysReset = map (keyFromName . stringToGlib) ["r", "R"]
+                           , keysNext  = map (keyFromName . stringToGlib) ["n", "N"]
+                           , keysPrev  = map (keyFromName . stringToGlib) ["p", "P"]
+                           , inputMode = InputMode MovementEnabled NoChangeStalled
                            }
-    sc = ScenarioSettings { _scenarioPool    = s
-                          , _currentScenario = 0
+    sc = ScenarioSettings { scenarioPool    = s
+                          , currentScenario = 0
                           }
   in (uic, sc)

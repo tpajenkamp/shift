@@ -21,6 +21,7 @@ import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State.Lazy
 
+import LensNaming
 import ShiftGame.Scenario
 
 -- | A listener that can be informed about @ScenarioUpdate@s.
@@ -79,10 +80,10 @@ initController :: (Functor m, ScenarioController ctrl sc m, UpdateListener u m s
 initController sc lst = fmap snd $ runStateT (addListener lst) (initControllerState sc)
 
 -- | The state of a controller handling communication between model and view
-data ControllerState m sc = ControllerState { _scenarioState :: ScenarioState sc       -- ^ the game state
-                                            , _listeners     :: [UpdateListenerType m sc]  -- ^ all known listeners
+data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc       -- ^ the game state
+                                            , listeners     :: [UpdateListenerType m sc]  -- ^ all known listeners
                                             }
-$(makeLenses ''ControllerState)
+$(makeLensPrefixLenses ''ControllerState)
 
 
 instance Show sc => Show (ControllerState m sc) where
@@ -94,52 +95,52 @@ instance Show sc => Show (ControllerState m sc) where
 instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc m where
     initControllerState = flip ControllerState []
     runPlayerMove move = do cs <- get
-                            let s = view scenarioState cs
+                            let s = scenarioState cs
                             case askPlayerMove s move of
                                  (Left reason) -> (return . Just) reason    -- propagate reason for invalid move
                                  (Right update) -> do                  -- update internal ScenarioState
                                      let (Right s') = updateScenario s update
-                                     put $ set scenarioState s' cs
+                                     put $ set lensScenarioState s' cs
                                      cs' <- get
                                      -- inform all listeners about change
-                                     lst <- lift $ sequence $ map (flip runReaderT (view scenarioState cs') . flip notifyUpdate update) (view listeners cs')
+                                     lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate update) (listeners cs')
                                      -- test winning condition
                                      lst' <- if (isWinningState s')
-                                         then lift $ sequence $ map (flip runReaderT (view scenarioState cs') . notifyWin) lst
+                                         then lift $ sequence $ map (flip runReaderT (scenarioState cs') . notifyWin) lst
                                          else return lst
-                                     modify (\cs -> set listeners lst' cs)
+                                     modify (\cs -> set lensListeners lst' cs)
                                      return Nothing
     addListener l = do cs <- get
-                       l' <- lift $ runReaderT (notifyNew l) (view scenarioState cs)
-                       modify (\cs -> over listeners (UpdateListenerType l' :) cs)
+                       l' <- lift $ runReaderT (notifyNew l) (scenarioState cs)
+                       modify (\cs -> over lensListeners (UpdateListenerType l' :) cs)
                        return ()
-    setScenario sc = do modify (\cs -> set scenarioState sc cs)
+    setScenario sc = do modify (\cs -> set lensScenarioState sc cs)
                         cs <- get
                         -- todo: lens traverse
-                        lst <- lift $ sequence $ map (flip runReaderT (view scenarioState cs) . notifyNew) (view listeners cs)
-                        modify (\cs -> set listeners lst cs)
+                        lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs) . notifyNew) (listeners cs)
+                        modify (\cs -> set lensListeners lst cs)
                         return ()
     undoAction = do cs <- get
-                    case undo (view scenarioState cs) of
+                    case undo (scenarioState cs) of
                          Left r -> (return . Just) r
-                         Right (u, scs) -> do put (set scenarioState scs cs)
+                         Right (u, scs) -> do put (set lensScenarioState scs cs)
                                               cs' <- get
                                               -- todo: lens traverse:
-                                              lst <- lift $ sequence $ map (flip runReaderT (view scenarioState cs') . flip notifyUpdate u) (view listeners cs)
-                                              modify (\cs -> set listeners lst cs)
+                                              lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
+                                              modify (\cs -> set lensListeners lst cs)
                                               return Nothing
     redoAction = do cs <- get
-                    case redo (view scenarioState cs) of
+                    case redo (scenarioState cs) of
                          Left r -> (return . Just) r
-                         Right (u, scs) -> do put (set scenarioState scs cs)
+                         Right (u, scs) -> do put (set lensScenarioState scs cs)
                                               cs' <- get
                                               -- todo: lens traverse:
-                                              lst <- lift $ sequence $ map (flip runReaderT (view scenarioState cs') . flip notifyUpdate u) (view listeners cs)
+                                              lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
                                               -- test winning condition
                                               lst' <- if (isWinningState scs)
-                                                then lift $ sequence $ map (flip runReaderT (view scenarioState cs') . notifyWin) lst
+                                                then lift $ sequence $ map (flip runReaderT (scenarioState cs') . notifyWin) lst
                                                 else return lst
                                               -- update ControllerState
-                                              modify (\cs -> set listeners lst' cs)
+                                              modify (\cs -> set lensListeners lst' cs)
                                               return Nothing
 

@@ -13,7 +13,7 @@ extra-source-files: README.md
  
 executable shift
     build-depends: base >=4.6 && <4.9, directory >= 1.0.0.0, filepath >= 1.0,
-                   array -any, containers -any,
+                   array -any, containers -any, template-haskell -any,
                    mtl -any, transformers -any, vector -any,
                    attoparsec -any, bytestring -any, deepseq -any,
                    gtk3 >=0.13, cairo -any, glib -any, lens >= 3.8
