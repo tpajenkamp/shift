@@ -47,6 +47,7 @@ data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Sh
 -- | When a scenario change is scheduled, stores the thread id of the stalling thread.
 --   The thread should only execute the scheduled switch if the thread id remains the same when the change is due.
 data ScenarioChangeMode = NoChangeStalled | ChangeStalled { stallingThreadId :: ThreadId } deriving (Eq, Show)
+$(makeLensPrefixLenses ''ScenarioChangeMode)
 
 data InputMode = InputMode { movementMode :: MovementMode
                            , scenarioChangeMode :: ScenarioChangeMode
@@ -400,38 +401,50 @@ Automatically switch to next level on win event
 --   @MVar (ScenarioSettings sc, ctrl)@ is always acquired before @MVar UserInputControl@
 data LevelProgressor sc ctrl = LevelProgressor (MVar UserInputControl) (MVar (ScenarioSettings sc, ctrl))
 
+-- problem: uRef is held by both this object and the key listener
+
 instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelProgressor sc ctrl) IO sc where
   notifyUpdate l _ = return l
   notifyNew l = return l
-  notifyWin l@(LevelProgressor uRef sRef) = do
-     --uic <- takeMVar uRef
-     newThreadId <- lift $ forkIO (do
-        var@(cs, ctrl) <- takeMVar sRef
-        -- uic' <- takeMVar uRef
-        -- me <- myThreadId
-        newVarContent <- case increaseScenarioId cs of
-                              Just (cs', newScen, _) -> do
-                                  putStrLn "shortly progressing to next level"
-                                  -- MVar is blocked, no game interaction possible during the wait
-                                  -- (if used correctly)
-                                  threadDelay 2000000
-                                  (_, newState) <- runStateT (setScenario newScen) ctrl
-                                  return (cs', newState)
-                              Nothing -> do
-                                  putStrLn "Dark Victory!!!!" >> return (cs, ctrl)
-            --putMVar uRef (uic' { inputMode = InputMode MovementDisabled NoChangeStalled }}
-        putMVar sRef newVarContent
-        )
-     --putMVar uRef (uic { inputMode = InputMode MovementDisabled (ChangeStalled newThreadId) })
+  notifyWin l@(LevelProgressor uRef sRef) = lift $ do
+     var@(scenSettings, _) <- takeMVar sRef
+     unless (isLastScenarioFromPoolCurrent scenSettings) $ do
+        uic <- takeMVar uRef
+        threadId <- forkIO (do
+           putStrLn "shortly progressing to next level"
+           threadDelay 2000000
+           (scenSettings, ctrl) <- takeMVar sRef
+           uic <- takeMVar uRef
+           me <- myThreadId
+           if maybe (False) (== me) (uic ^? lensInputMode . lensScenarioChangeMode . lensStallingThreadId)
+             then do
+                let mbNextScen = increaseScenarioId scenSettings
+                maybe (do putMVar uRef (uic & lensInputMode . lensScenarioChangeMode .~ NoChangeStalled)
+                          putMVar sRef (scenSettings, ctrl))
+                      (\(scenSettings', newScen, _) -> do
+                          (_, ctrl') <- runStateT (setScenario newScen) ctrl
+                          putMVar uRef (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled)
+                                                             . (lensScenarioChangeMode .~ NoChangeStalled))
+                          putMVar sRef (scenSettings', ctrl'))
+                      mbNextScen
+             else do
+                putStrLn "Dark Victory!!!!"
+                putMVar uRef uic
+                putMVar sRef (scenSettings, ctrl)
+          )
+        putMVar uRef (uic & lensInputMode %~ (lensScenarioChangeMode .~ ChangeStalled threadId)
+                                           . (lensMovementMode .~ MovementDisabled))
+     putMVar sRef var
      return l
 
 {-
 Keyboard Listener
 -}
 
--- implementation detaiol: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
+-- implementation detail: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
 -- that is the reason why an 'MVar' is used.
 -- | Processes keyboard events and determines the resulting player action.
+--   Takes @MVar (ScenarioSettings sc, ctrl)@ before @MVar UserInputControl@.
 keyboardHandler :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (UserInputControl) -> MVar (ScenarioSettings sc, ctrl) -> EventM EKey Bool
 keyboardHandler uRef sRef = do 
     keySettings <- (lift . readMVar) uRef
@@ -443,44 +456,69 @@ keyboardHandler uRef sRef = do
       else if (keyV `elem` keysReset keySettings)
       then lift $ forkIO (do
              (scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
              let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
              (_, ctrl') <- runStateT (setScenario currentScen) ctrl
              putStrLn "level reset"
-             putMVar sRef (scenSettings, ctrl')) >> return True
+             putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+             putMVar sRef (scenSettings, ctrl')
+           ) >> return True
       -- set next level in pool
       else if (keyV `elem` keysNext keySettings)
       then lift $ forkIO (do
              var@(scenSettings, ctrl) <- takeMVar sRef
-             case increaseScenarioId scenSettings of
-                  Just (scenSettings', nextScen, _) -> do
-                     (_, ctrl') <- runStateT (setScenario nextScen) ctrl
-                     putStrLn "next level"
-                     putMVar sRef (scenSettings', ctrl')
-                  Nothing -> putMVar sRef var) >> return True
+             keySettings <- takeMVar uRef
+             new <- case increaseScenarioId scenSettings of
+                         Just (scenSettings', nextScen, _) -> do
+                              (_, ctrl') <- runStateT (setScenario nextScen) ctrl
+                              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                              putStrLn "next level"
+                              return (scenSettings', ctrl')
+                         Nothing -> putMVar uRef keySettings >> return var
+             putMVar sRef new
+           ) >> return True
       -- set previous level in pool
       else if (keyV `elem` keysPrev keySettings)
       then lift $ forkIO (do
              var@(scenSettings, ctrl) <- takeMVar sRef
-             case decreaseScenarioId scenSettings of
-                  Just (scenSettings', prevScen, _) -> do
-                     (_, ctrl') <- runStateT (setScenario prevScen) ctrl
-                     putStrLn "next level"
-                     putMVar sRef (scenSettings', ctrl')
-                  Nothing -> (putMVar sRef var)) >> return True
+             keySettings <- takeMVar uRef
+             new <- case decreaseScenarioId scenSettings of
+                         Just (scenSettings', prevScen, _) -> do
+                              (_, ctrl') <- runStateT (setScenario prevScen) ctrl
+                              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                              putStrLn "next level"
+                              return (scenSettings', ctrl')
+                         Nothing -> putMVar uRef keySettings >> return var
+             putMVar sRef new
+           ) >> return True
       -- undo last move
       else if (keyV `elem` keysUndo keySettings)
       then lift $ forkIO (do
              (scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
              (err, ctrl') <- runStateT undoAction ctrl
-             putStrLn $ maybe "undo" ((++) "undo: " . show) err
-             putMVar sRef (scenSettings, ctrl')) >> return True
+             case err of
+                  Just e -> do putMVar uRef keySettings
+                               putStrLn ("undo : " ++ show e)
+                  Nothing -> do putMVar uRef (keySettings & lensInputMode %~
+                                    (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                                putStrLn "undo"
+             putMVar sRef (scenSettings, ctrl')
+           ) >> return True
       -- redo last undo
       else if (keyV `elem` keysRedo keySettings)
       then lift $ forkIO (do
              (scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
              (err, ctrl') <- runStateT redoAction ctrl
-             putStrLn $ maybe "redo" ((++) "redo: " . show) err
-             putMVar sRef (scenSettings, ctrl')) >> return True 
+             case err of
+                  Just e -> do putMVar uRef keySettings
+                               putStrLn ("redo : " ++ show e)
+                  Nothing -> do putMVar uRef (keySettings & lensInputMode %~
+                                    (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                                putStrLn "redo"
+             putMVar sRef (scenSettings, ctrl')
+           ) >> return True 
       -- player movement
       else do
           let mbPlayerAction = if keyV `elem` keysLeft keySettings  then Just MLeft
@@ -498,9 +536,9 @@ keyboardHandler uRef sRef = do
                           (scenSettings, ctrl) <- takeMVar sRef
                           (putStrLn . show) action
                           (denyReason, ctrl') <- runStateT (runPlayerMove action) ctrl
-                          case denyReason of
-                               Just r  -> putMVar sRef (scenSettings, ctrl') >> putStrLn (show r)    -- failure
-                               Nothing -> putMVar sRef (scenSettings, ctrl')    -- success
+                          when (isJust denyReason) $
+                              (putStrLn . show . fromJust) denyReason    -- failure
+                          putMVar sRef (scenSettings, ctrl')
                         ) >> return ()
                  return True
     return b
