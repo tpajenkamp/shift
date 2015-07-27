@@ -54,6 +54,8 @@ instance Monad m => UpdateListener (UpdateListenerType m sc) m sc where
 class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl -> sc m where
     -- | Initial controller state with the given scenario and without any listeners.
     initControllerState :: ScenarioState sc -> ctrl
+    -- | Returns current @ScenarioState@.
+    getControllerScenarioState :: ctrl -> ScenarioState sc
     -- | Tries to move the player into the specified direction.
     --   Notifies all registered listeners on success and returns 'Nothing'.
     --   If the move is not possible returns the reason.
@@ -93,6 +95,7 @@ instance Show sc => Show (ControllerState m sc) where
 -- todo: not working, m and sc need to be derived from ctrl
 -- otherwise it is required to work with EVERY monad and scenario type
 instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc m where
+    getControllerScenarioState = scenarioState
     initControllerState = flip ControllerState []
     runPlayerMove move = do cs <- get
                             let s = scenarioState cs

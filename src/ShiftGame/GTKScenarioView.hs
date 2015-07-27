@@ -68,9 +68,6 @@ data UserInputControl = UserInputControl { keysLeft   :: [KeyVal] -- ^ keys (alt
                                          } deriving (Eq, Show)
 $(makeLensPrefixLenses ''UserInputControl)
 
--- todo: keys in extra container such that movement can be ignored while other commands can still be executed (during wait for next level)
---       disable movement after winning a level (especially after winning the last level)
-
 {-
 TextView based view
 -}
@@ -401,40 +398,54 @@ Automatically switch to next level on win event
 --   @MVar (ScenarioSettings sc, ctrl)@ is always acquired before @MVar UserInputControl@
 data LevelProgressor sc ctrl = LevelProgressor (MVar UserInputControl) (MVar (ScenarioSettings sc, ctrl))
 
--- problem: uRef is held by both this object and the key listener
 
 instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelProgressor sc ctrl) IO sc where
   notifyUpdate l _ = return l
   notifyNew l = return l
   notifyWin l@(LevelProgressor uRef sRef) = lift $ do
-     var@(scenSettings, _) <- takeMVar sRef
-     unless (isLastScenarioFromPoolCurrent scenSettings) $ do
+     -- create new thread because sRef and uRef are blocked by keyboard listener
+     _ <- forkIO (do
+        var@(scenSettings, ctrl) <- takeMVar sRef
         uic <- takeMVar uRef
-        threadId <- forkIO (do
-           putStrLn "shortly progressing to next level"
-           threadDelay 2000000
-           (scenSettings, ctrl) <- takeMVar sRef
-           uic <- takeMVar uRef
-           me <- myThreadId
-           if maybe (False) (== me) (uic ^? lensInputMode . lensScenarioChangeMode . lensStallingThreadId)
-             then do
-                let mbNextScen = increaseScenarioId scenSettings
-                maybe (do putMVar uRef (uic & lensInputMode . lensScenarioChangeMode .~ NoChangeStalled)
-                          putMVar sRef (scenSettings, ctrl))
-                      (\(scenSettings', newScen, _) -> do
-                          (_, ctrl') <- runStateT (setScenario newScen) ctrl
-                          putMVar uRef (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled)
-                                                             . (lensScenarioChangeMode .~ NoChangeStalled))
-                          putMVar sRef (scenSettings', ctrl'))
-                      mbNextScen
-             else do
-                putStrLn "Dark Victory!!!!"
-                putMVar uRef uic
-                putMVar sRef (scenSettings, ctrl)
-          )
-        putMVar uRef (uic & lensInputMode %~ (lensScenarioChangeMode .~ ChangeStalled threadId)
-                                           . (lensMovementMode .~ MovementDisabled))
-     putMVar sRef var
+        -- test if current scenario is not last scenario AND scenario is still in winning state (may have changed after fork)
+        if ((not . isLastScenarioFromPoolCurrent) scenSettings && (isWinningState . getControllerScenarioState) ctrl) 
+          then do  -- initiate level progression
+            putStrLn "shortly progressing to next level"
+            me <- myThreadId
+            -- disable player movement and register stalled change
+            putMVar uRef (uic & lensInputMode %~ (lensScenarioChangeMode .~ ChangeStalled me)
+                                               . (lensMovementMode .~ MovementDisabled))
+            putMVar sRef var
+            -- wait some time with level change
+            threadDelay 2000000    -- microseconds
+            var@(scenSettings, ctrl) <- takeMVar sRef
+            uic <- takeMVar uRef
+            -- test if thread id is still registered, otherwise: do nothing
+            -- (level may have been changed manually, reset, undone, ...)
+            if maybe (False) (== me) (uic ^? lensInputMode . lensScenarioChangeMode . lensStallingThreadId)
+              then do
+                 -- set next level
+                 let mbNextScen = increaseScenarioId scenSettings    -- returns Maybe
+                 maybe (do putMVar uRef (uic & lensInputMode . lensScenarioChangeMode .~ NoChangeStalled)
+                           putMVar sRef var)                         -- no "next" scenario, do nothing
+                       (\(scenSettings', newScen, _) -> do
+                           (_, ctrl') <- runStateT (setScenario newScen) ctrl
+                           putMVar uRef (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled)
+                                                              . (lensScenarioChangeMode .~ NoChangeStalled))
+                           putMVar sRef (scenSettings', ctrl'))      -- change scenario
+                       mbNextScen
+              else do
+                 putMVar uRef uic
+                 putMVar sRef var
+          else do  -- is last scenario OR state is not winning any longer (for whatever reasons)
+             if (isWinningState . getControllerScenarioState) ctrl
+               -- last scenario reached, disable movement
+               then putMVar uRef (uic & lensInputMode . lensMovementMode .~ MovementDisabled)
+                 >> putStrLn "Dark Victory!!!!"
+               -- whatever, do nothing
+               else putMVar uRef uic
+             putMVar sRef var
+       )
      return l
 
 {-
@@ -460,6 +471,7 @@ keyboardHandler uRef sRef = do
              let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
              (_, ctrl') <- runStateT (setScenario currentScen) ctrl
              putStrLn "level reset"
+             -- there may be a delayed level change -> disable and enable player movement
              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
              putMVar sRef (scenSettings, ctrl')
            ) >> return True
@@ -471,6 +483,7 @@ keyboardHandler uRef sRef = do
              new <- case increaseScenarioId scenSettings of
                          Just (scenSettings', nextScen, _) -> do
                               (_, ctrl') <- runStateT (setScenario nextScen) ctrl
+                              -- there may be a delayed level change -> disable and enable player movement
                               putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
                               putStrLn "next level"
                               return (scenSettings', ctrl')
@@ -485,6 +498,7 @@ keyboardHandler uRef sRef = do
              new <- case decreaseScenarioId scenSettings of
                          Just (scenSettings', prevScen, _) -> do
                               (_, ctrl') <- runStateT (setScenario prevScen) ctrl
+                              -- there may be a delayed level change -> disable and enable player movement
                               putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
                               putStrLn "next level"
                               return (scenSettings', ctrl')
@@ -526,11 +540,12 @@ keyboardHandler uRef sRef = do
                           else if keyV `elem` keysUp keySettings    then Just MUp
                           else if keyV `elem` keysDown keySettings  then Just MDown
                           else Nothing
-           -- run controller
+          -- test if valid movement key has been pressed
           case mbPlayerAction of
                Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
                              return False
                Just action -> do
+                 -- test if player movement is enabled
                  when (view (lensInputMode . lensMovementMode) keySettings == MovementEnabled) $
                         lift $ forkIO (do
                           (scenSettings, ctrl) <- takeMVar sRef
