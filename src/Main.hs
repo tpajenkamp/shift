@@ -32,7 +32,6 @@ import           System.Environment
 import           System.FilePath (pathSeparator)
 import           System.Glib.UTFString
 
-import LensNaming
 import ShiftGame.Helpers
 import ShiftGame.GTKScenarioView
 import ShiftGame.Scenario
@@ -62,7 +61,7 @@ readScenario levelPath = do
    levelRaw <- catch (B.readFile levelPath) ((\e -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)::IOError -> IO ByteString)
    runParser levelRaw
 
-createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO ctrl
+createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO (Window, ctrl)
 createTextViewWindow sRef keyHandler = do
    (scenSettings, ctrl) <- takeMVar sRef
    
@@ -80,19 +79,19 @@ createTextViewWindow sRef keyHandler = do
    -- add keyboard listener
    putMVar sRef (scenSettings, ctrl)
    _ <- textArea `on` keyPressEvent $ keyHandler
-   -- finalize window
-   _ <- window `on` deleteEvent $ lift mainQuit >> return False
-   widgetShowAll window
-   return ctrl
 
-createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO ctrl
+   -- finalize window
+   widgetShowAll window
+   return (window, ctrl)
+
+createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO (Window, ctrl)
 createGraphicsViewWindow sRef keyHandler = do
    (scenSettings, ctrl) <- takeMVar sRef
    let scenState = getScenarioFromPool scenSettings (currentScenario scenSettings)
 
-   window2 <- windowNew
+   window <- windowNew
    vbox2 <- vBoxNew False 0    -- main container for window2
-   Gtk.set window2 [ containerChild := vbox2]
+   Gtk.set window [ containerChild := vbox2]
    -- add graphical view
    (canvas, ctrl) <- createGraphicsBasedView ctrl scenState
    widgetSetCanFocus canvas True
@@ -100,12 +99,13 @@ createGraphicsViewWindow sRef keyHandler = do
    -- add status bar
    (infobar2, ctrl) <- createInfoBar ctrl
    boxPackStart vbox2 infobar2 PackRepel 0
-
+   -- add keyboard listener
    putMVar sRef (scenSettings, ctrl)
-
    _ <- canvas `on` keyPressEvent $ keyHandler
-   widgetShowAll window2
-   return ctrl
+
+   -- finalize window
+   widgetShowAll window
+   return (window, ctrl)
 
 
 main :: IO ()
@@ -121,14 +121,21 @@ main = do
    let scenState = case scenStates of [] -> emptyScenarioState; a:_ -> a
        ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
        (uc, sc) = initSettings scenStates
-   uRef <- newMVar uc
-   sRef <- newMVar (sc, ctrl)
-   let keyHandler = keyboardHandler uRef sRef
+   uRef <- newMVar uc            :: IO (MVar UserInputControl)
+   sRef <- newMVar (sc, ctrl)    :: IO (MVar (ScenarioSettings MatrixScenario, ControllerState IO MatrixScenario))
+   wRef <- newMVar []            :: IO (MVar [Window])
 
-   ctrl <- createTextViewWindow sRef keyHandler
-   ctrl <- createGraphicsViewWindow sRef keyHandler
+   let keyHandler = keyboardHandler uRef sRef wRef
 
+   (win1, ctrl) <- createTextViewWindow sRef keyHandler
+   (win2, ctrl) <- createGraphicsViewWindow sRef keyHandler
+
+   _ <- win1 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
+   _ <- win2 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
    (_, ctrl) <- autoAdvanceLevel uRef sRef
+
+   wins <- takeMVar wRef
+   putMVar wRef (win1:win2:wins)
 
    mainGUI
 

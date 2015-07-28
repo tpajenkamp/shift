@@ -32,6 +32,7 @@ import           System.Directory (doesFileExist)
 import           System.FilePath (pathSeparator)
 
 import LensNaming
+import ShiftGame.Helpers
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 
@@ -452,17 +453,24 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
 Keyboard Listener
 -}
 
+-- | Destroys all given windows and clears the @MVar@.
+quitAllWindows :: MVar [Window] -> IO ()
+quitAllWindows wRef = do
+    windows <- takeMVar wRef
+    mapM_ widgetDestroy windows
+    putMVar wRef []
+
 -- implementation detail: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
 -- that is the reason why an 'MVar' is used.
 -- | Processes keyboard events and determines the resulting player action.
---   Takes @MVar (ScenarioSettings sc, ctrl)@ before @MVar UserInputControl@.
-keyboardHandler :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (UserInputControl) -> MVar (ScenarioSettings sc, ctrl) -> EventM EKey Bool
-keyboardHandler uRef sRef = do 
+--   Takes @MVar (ScenarioSettings sc, ctrl)@ before @MVar UserInputControl@ before @MVar [Window]@.
+keyboardHandler :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (UserInputControl) -> MVar (ScenarioSettings sc, ctrl) -> MVar [Window] -> EventM EKey Bool
+keyboardHandler uRef sRef wRef = do 
     keySettings <- (lift . readMVar) uRef
     keyV <- eventKeyVal
     -- test to quit game
     b <- if (keyV `elem` keysQuit keySettings)
-      then lift mainQuit >> return True
+      then lift (quitAllWindows wRef) >> lift mainQuit >> return True
       -- reset current level
       else if (keyV `elem` keysReset keySettings)
       then lift $ forkIO (do
