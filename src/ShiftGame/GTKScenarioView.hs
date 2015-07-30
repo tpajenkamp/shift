@@ -49,7 +49,7 @@ data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Sh
 
 -- | When a scenario change is scheduled, stores the thread id of the stalling thread.
 --   The thread should only execute the scheduled switch if the thread id remains the same when the change is due.
-data ScenarioChangeMode = NoChangeStalled | ChangeStalled { stallingThreadId :: ThreadId } deriving (Eq, Show)
+data ScenarioChangeMode = NoChangeStalled | ChangeStalled { stallingThreadId :: ThreadId, stalledScenarioId :: ScenarioId } deriving (Eq, Show)
 $(makeLensPrefixLenses ''ScenarioChangeMode)
 
 data InputMode = InputMode { movementMode :: MovementMode
@@ -95,13 +95,13 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
 
 
 
-setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> ScenarioSettings sc
+setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> (ScenarioSettings sc)
 setScenarioPool cs s = set lensScenarioPool s cs
 
-setCurrentScenario :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioSettings sc)
+setCurrentScenario :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioSettings sc, ScenarioState sc)
 setCurrentScenario cs sId =
   if (sId > 0 && sId <= length (scenarioPool cs))
-    then Just $ set lensCurrentScenario sId cs
+    then Just (set lensCurrentScenario sId cs, scenarioPool cs !! sId)
     else Nothing
 
 getScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> ScenarioState sc
@@ -416,7 +416,7 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
             putStrLn "shortly progressing to next level"
             me <- myThreadId
             -- disable player movement and register stalled change
-            putMVar uRef (uic & lensInputMode %~ (lensScenarioChangeMode .~ ChangeStalled me)
+            putMVar uRef (uic & lensInputMode %~ (lensScenarioChangeMode .~ ChangeStalled me (currentScenario scenSettings + 1))
                                                . (lensMovementMode .~ MovementDisabled))
             putMVar sRef var
             -- wait some time with level change
@@ -428,10 +428,11 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
             if maybe (False) (== me) (uic ^? lensInputMode . lensScenarioChangeMode . lensStallingThreadId)
               then do
                  -- set next level
-                 let mbNextScen = increaseScenarioId scenSettings    -- returns Maybe
+                                                                  -- is guaranteed to be Just ... because of earlier check
+                 let mbNextScen = setCurrentScenario scenSettings (fromJust $ uic ^? lensInputMode . lensScenarioChangeMode . lensStalledScenarioId)
                  maybe (do putMVar uRef (uic & lensInputMode . lensScenarioChangeMode .~ NoChangeStalled)
                            putMVar sRef var)                         -- no "next" scenario, do nothing
-                       (\(scenSettings', newScen, _) -> do
+                       (\(scenSettings', newScen) -> do
                            (_, ctrl') <- runStateT (setScenario newScen) ctrl
                            putMVar uRef (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled)
                                                               . (lensScenarioChangeMode .~ NoChangeStalled))
