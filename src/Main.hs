@@ -17,14 +17,11 @@ module Main where
 
 --import           Control.DeepSeq
 import           Control.Concurrent.MVar
-import           Control.Exception
+--import           Control.Exception
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
-import           Data.Attoparsec.ByteString.Char8 (parseOnly)
-import           Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B
 import           Data.Either
 import           Graphics.UI.Gtk hiding(get, set)
 import qualified Graphics.UI.Gtk as Gtk
@@ -33,33 +30,12 @@ import           System.FilePath (pathSeparator)
 import           System.Glib.UTFString
 
 import ShiftGame.Helpers
-import ShiftGame.GTKScenarioView
+import ShiftGame.GtkScenarioView
+import ShiftGame.GtkShiftIO
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
-import ShiftGame.ScenarioParser
+import ShiftGame.ShiftIO
 
-displayScenarioData :: ScenarioState MatrixScenario -> IO ()
-displayScenarioData sc = do
-   putStrLn $ "player: " ++ (show . playerCoord) sc ++ " empty targets: " ++ (show . emptyTargets) sc
-   (B.putStrLn . flip showScenarioWithPlayer (playerCoord sc) . scenario) sc
-
-runParser :: ByteString -> IO [ScenarioState MatrixScenario]
-runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenarioCollection) initParseState) levelRaw
-                        unless (isRight possiblyParsed) $
-                            do guard False
-                               (error . fromLeft) possiblyParsed
-                        let (myScenarioStates, myParseState) = fromRight possiblyParsed
-                        _ <- mapM evaluate myScenarioStates
-                        putStrLn "warnings:"
-                        putStrLn $ (unlines . map show . reverse . warnings) myParseState
-                        mapM displayScenarioData myScenarioStates
-                        return myScenarioStates -- todo: parse error
-
-
-readScenario :: FilePath -> IO [ScenarioState MatrixScenario]
-readScenario levelPath = do
-   levelRaw <- catch (B.readFile levelPath) ((\e -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)::IOError -> IO ByteString)
-   runParser levelRaw
 
 createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO (Window, ctrl)
 createTextViewWindow sRef keyHandler = do
@@ -110,14 +86,16 @@ createGraphicsViewWindow sRef keyHandler = do
 
 main :: IO ()
 main = do
+   _ <- initGUI
+
    -- read level
    args <- getArgs
-   let levelPath = if null args
-                     then "level.txt"
-                     else head args
+   levelPath <- if null args
+                  then do mbPath <- showSelectScenarioDialog :: IO (Maybe FilePath)
+                          return $ maybe "level.txt" id mbPath
+                  else return $ head args
    scenStates <- readScenario levelPath
    -- initialize window
-   _ <- initGUI
    let scenState = case scenStates of [] -> emptyScenarioState; a:_ -> a
        ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
        (uc, sc) = initSettings scenStates
@@ -136,7 +114,7 @@ main = do
 
    wins <- takeMVar wRef
    putMVar wRef (win1:win2:wins)
-
+   
    mainGUI
 
 

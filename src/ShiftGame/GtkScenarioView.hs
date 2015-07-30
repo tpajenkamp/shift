@@ -13,7 +13,7 @@
 --
 -----------------------------------------------------------------------------
 
-module ShiftGame.GTKScenarioView where
+module ShiftGame.GtkScenarioView where
 
 import           Control.Concurrent
 import           Control.Lens
