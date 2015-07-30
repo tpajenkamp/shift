@@ -51,6 +51,8 @@ data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Sh
 --   The thread should only execute the scheduled switch if the thread id remains the same when the change is due.
 data ScenarioChangeMode = NoChangeStalled | ChangeStalled { stallingThreadId :: ThreadId, stalledScenarioId :: ScenarioId } deriving (Eq, Show)
 $(makeLensPrefixLenses ''ScenarioChangeMode)
+$(makePrisms ''ScenarioChangeMode)
+
 
 data InputMode = InputMode { movementMode :: MovementMode
                            , scenarioChangeMode :: ScenarioChangeMode
@@ -396,7 +398,7 @@ Automatically switch to next level on win event
 -}
 
 
--- | @UpdateListener@ to automatically advance to the next level when a scenario is won.
+-- | @UpdateListener@ to automatically advance to the next level when a scenario is won (after some time).
 --   
 --   @MVar (ScenarioSettings sc, ctrl)@ is always acquired before @MVar UserInputControl@
 data LevelProgressor sc ctrl = LevelProgressor (MVar UserInputControl) (MVar (ScenarioSettings sc, ctrl))
@@ -556,16 +558,30 @@ keyboardHandler uRef sRef wRef = do
                Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
                              return False
                Just action -> do
+                 var@(scenSettings, ctrl) <- lift $ takeMVar sRef
+                 keySettings <- lift $ takeMVar uRef
                  -- test if player movement is enabled
-                 when (view (lensInputMode . lensMovementMode) keySettings == MovementEnabled) $
-                        lift $ forkIO (do
+                 if (view (lensInputMode . lensMovementMode) keySettings == MovementEnabled)
+                   then lift $ forkIO (do
                           (scenSettings, ctrl) <- takeMVar sRef
                           (putStrLn . show) action
                           (denyReason, ctrl') <- runStateT (runPlayerMove action) ctrl
                           when (isJust denyReason) $
                               (putStrLn . show . fromJust) denyReason    -- failure
                           putMVar sRef (scenSettings, ctrl')
-                        ) >> return ()
+                        ) >> putMVar uRef keySettings >> putMVar sRef var
+                   -- if movement is disabled AND delayed level change is stalled: perform now
+                   else lift $ maybe (do putMVar uRef keySettings >> putMVar sRef var)
+                                     (\(_, scId) -> do
+                                       let mbNextScen = setCurrentScenario scenSettings scId
+                                       maybe (putMVar uRef keySettings >> putMVar sRef var)    -- something is wrong with stalled change, do nothing
+                                             (\(scenSettings', newScen) -> do
+                                                 (_, ctrl') <- runStateT (setScenario newScen) ctrl
+                                                 putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled)
+                                                                                            . (lensScenarioChangeMode .~ NoChangeStalled))
+                                                 putMVar sRef (scenSettings', ctrl'))          -- perform stalled change
+                                             mbNextScen
+                                     ) (keySettings ^? lensInputMode . lensScenarioChangeMode . _ChangeStalled)
                  return True
     return b
 
