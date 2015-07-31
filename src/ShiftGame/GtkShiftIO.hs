@@ -1,11 +1,13 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, ScopedTypeVariables #-}
 module ShiftGame.GtkShiftIO where
 
 import           Control.Concurrent
-import           Control.Exception (evaluate)
+import           Control.Exception
 import           Control.Lens
 import           Control.Monad.Trans.State.Lazy
 import           Graphics.UI.Gtk hiding (get, set, rectangle)
+import           System.Directory
+import           System.FilePath
 import           System.Glib.UTFString
 
 import ShiftGame.Helpers
@@ -22,6 +24,10 @@ Gtk Dialog to choose level file
 showSelectScenarioDialog :: GlibFilePath fp => IO (Maybe fp)
 showSelectScenarioDialog = do
    chooser <- fileChooserDialogNew (Just "Select level...") Nothing FileChooserActionOpen [("_Cancel", ResponseCancel), ("_Open", ResponseAccept)]
+   catch (do wDir <- getCurrentDirectory
+             let lvlDir = wDir ++ pathSeparator : "levels"
+             lvlDirExist <- doesDirectoryExist lvlDir
+             fileChooserSetCurrentFolder chooser (if lvlDirExist then lvlDir else wDir)) (\(_ :: IOException) -> return False)
    fileChooserSetSelectMultiple chooser False
    dlgResponse <- dialogRun chooser
    widgetHide chooser
