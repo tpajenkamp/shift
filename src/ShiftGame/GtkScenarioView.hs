@@ -98,7 +98,7 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
 
 
 setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> (ScenarioSettings sc)
-setScenarioPool cs s = set lensScenarioPool s cs
+setScenarioPool cs s = cs & (lensScenarioPool .~ s) & (lensCurrentScenario .~ 0)
 
 setCurrentScenario :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioSettings sc, ScenarioState sc)
 setCurrentScenario cs sId =
