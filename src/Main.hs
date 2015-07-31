@@ -16,13 +16,13 @@
 module Main where
 
 --import           Control.DeepSeq
-import           Control.Concurrent.MVar
+import           Control.Concurrent
 --import           Control.Exception
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
-import           Data.Either
+import           Data.Maybe
 import           Graphics.UI.Gtk hiding(get, set)
 import qualified Graphics.UI.Gtk as Gtk
 import           System.Environment
@@ -170,9 +170,136 @@ initSettings s = let
                            , keysReset = map (keyFromName . stringToGlib) ["r", "R"]
                            , keysNext  = map (keyFromName . stringToGlib) ["n", "N"]
                            , keysPrev  = map (keyFromName . stringToGlib) ["p", "P"]
+                           , keysLoad  = map (keyFromName . stringToGlib) ["o", "O"]
                            , inputMode = InputMode MovementEnabled NoChangeStalled
                            }
     sc = ScenarioSettings { scenarioPool    = s
                           , currentScenario = 0
                           }
   in (uic, sc)
+
+
+
+-- implementation detail: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader
+-- that is the reason why an 'MVar' is used.
+-- | Processes keyboard events and determines the resulting player action.
+--   Takes @MVar (ScenarioSettings sc, ctrl)@ before @MVar UserInputControl@ before @MVar [Window]@.
+keyboardHandler :: (ScenarioController ctrl MatrixScenario IO) => MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> MVar [Window] -> EventM EKey Bool
+keyboardHandler uRef sRef wRef = do 
+    keySettings <- (lift . readMVar) uRef
+    keyV <- eventKeyVal
+    -- test to quit game
+    b <- if (keyV `elem` keysQuit keySettings)
+      then lift (quitAllWindows wRef) >> lift mainQuit >> return True
+      -- reset current level
+      else if (keyV `elem` keysReset keySettings)
+      then lift $ forkIO (do
+             (scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
+             let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
+             (_, ctrl') <- runStateT (setScenario currentScen) ctrl
+             putStrLn "level reset"
+             -- there may be a delayed level change -> disable and enable player movement
+             putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+             putMVar sRef (scenSettings, ctrl')
+           ) >> return True
+      -- set next level in pool
+      else if (keyV `elem` keysNext keySettings)
+      then lift $ forkIO (do
+             var@(scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
+             new <- case increaseScenarioId scenSettings of
+                         Just (scenSettings', nextScen, _) -> do
+                              (_, ctrl') <- runStateT (setScenario nextScen) ctrl
+                              -- there may be a delayed level change -> disable and enable player movement
+                              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                              putStrLn "next level"
+                              return (scenSettings', ctrl')
+                         Nothing -> putMVar uRef keySettings >> return var
+             putMVar sRef new
+           ) >> return True
+      -- set previous level in pool
+      else if (keyV `elem` keysPrev keySettings)
+      then lift $ forkIO (do
+             var@(scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
+             new <- case decreaseScenarioId scenSettings of
+                         Just (scenSettings', prevScen, _) -> do
+                              (_, ctrl') <- runStateT (setScenario prevScen) ctrl
+                              -- there may be a delayed level change -> disable and enable player movement
+                              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                              putStrLn "next level"
+                              return (scenSettings', ctrl')
+                         Nothing -> putMVar uRef keySettings >> return var
+             putMVar sRef new
+           ) >> return True
+      -- undo last move
+      else if (keyV `elem` keysUndo keySettings)
+      then lift $ forkIO (do
+             (scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
+             (err, ctrl') <- runStateT undoAction ctrl
+             case err of
+                  Just e -> do putMVar uRef keySettings
+                               putStrLn ("undo : " ++ show e)
+                  Nothing -> do putMVar uRef (keySettings & lensInputMode %~
+                                    (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                                putStrLn "undo"
+             putMVar sRef (scenSettings, ctrl')
+           ) >> return True
+      -- redo last undo
+      else if (keyV `elem` keysRedo keySettings)
+      then lift $ forkIO (do
+             (scenSettings, ctrl) <- takeMVar sRef
+             keySettings <- takeMVar uRef
+             (err, ctrl') <- runStateT redoAction ctrl
+             case err of
+                  Just e -> do putMVar uRef keySettings
+                               putStrLn ("redo : " ++ show e)
+                  Nothing -> do putMVar uRef (keySettings & lensInputMode %~
+                                    (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
+                                putStrLn "redo"
+             putMVar sRef (scenSettings, ctrl')
+           ) >> return True
+      -- open level file selection dialog
+      else if (keyV `elem` keysLoad keySettings)
+      then lift $ forkIO (void $ selectScenarioFile uRef sRef) >> return True 
+      -- player movement
+      else do
+          let mbPlayerAction = if keyV `elem` keysLeft keySettings  then Just MLeft
+                          else if keyV `elem` keysRight keySettings then Just MRight
+                          else if keyV `elem` keysUp keySettings    then Just MUp
+                          else if keyV `elem` keysDown keySettings  then Just MDown
+                          else Nothing
+          -- test if valid movement key has been pressed
+          case mbPlayerAction of
+               Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
+                             return False
+               Just action -> do
+                 var@(scenSettings, ctrl) <- lift $ takeMVar sRef
+                 keySettings <- lift $ takeMVar uRef
+                 -- test if player movement is enabled
+                 if (view (lensInputMode . lensMovementMode) keySettings == MovementEnabled)
+                   then lift $ forkIO (do
+                          (scenSettings, ctrl) <- takeMVar sRef
+                          (putStrLn . show) action
+                          (denyReason, ctrl') <- runStateT (runPlayerMove action) ctrl
+                          when (isJust denyReason) $
+                              (putStrLn . show . fromJust) denyReason    -- failure
+                          putMVar sRef (scenSettings, ctrl')
+                        ) >> putMVar uRef keySettings >> putMVar sRef var
+                   -- if movement is disabled AND delayed level change is stalled: perform now
+                   else lift $ maybe (do putMVar uRef keySettings >> putMVar sRef var)
+                                     (\(_, scId) -> do
+                                       let mbNextScen = setCurrentScenario scenSettings scId
+                                       maybe (putMVar uRef keySettings >> putMVar sRef var)    -- something is wrong with stalled change, do nothing
+                                             (\(scenSettings', newScen) -> do
+                                                 (_, ctrl') <- runStateT (setScenario newScen) ctrl
+                                                 putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled)
+                                                                                            . (lensScenarioChangeMode .~ NoChangeStalled))
+                                                 putMVar sRef (scenSettings', ctrl'))          -- perform stalled change
+                                             mbNextScen
+                                     ) (keySettings ^? lensInputMode . lensScenarioChangeMode . _ChangeStalled)
+                 return True
+    return b
+

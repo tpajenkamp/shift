@@ -2,7 +2,6 @@ module ShiftGame.ShiftIO where
 
 import           Control.Exception
 import           Control.Monad
-import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
 import           Data.Attoparsec.ByteString.Char8 (parseOnly)
 import           Data.ByteString.Char8 (ByteString)
