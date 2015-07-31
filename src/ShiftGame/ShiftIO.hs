@@ -7,6 +7,7 @@ import           Control.Monad.Trans.State.Lazy
 import           Data.Attoparsec.ByteString.Char8 (parseOnly)
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
+import           Data.Either
 
 
 import ShiftGame.Helpers
