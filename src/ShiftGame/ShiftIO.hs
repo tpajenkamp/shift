@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module ShiftGame.ShiftIO where
 
 import           Control.Exception
@@ -34,6 +35,6 @@ runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenario
 
 readScenario :: FilePath -> IO [ScenarioState MatrixScenario]
 readScenario levelPath = do
-   levelRaw <- catch (B.readFile levelPath) ((\e -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)::IOError -> IO ByteString)
+   levelRaw <- catch (B.readFile levelPath) (\(_ :: IOException) -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)
    runParser levelRaw
 
