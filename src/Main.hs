@@ -84,6 +84,8 @@ createGraphicsViewWindow sRef keyHandler = do
    return (window, ctrl)
 
 
+-- todo: level choosing if input file is no valid level file
+
 main :: IO ()
 main = do
    _ <- initGUI
