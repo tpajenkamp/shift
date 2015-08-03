@@ -25,6 +25,7 @@ import           Control.Monad.Trans.State.Lazy
 import           Data.Maybe
 import           Graphics.UI.Gtk hiding(get, set)
 import qualified Graphics.UI.Gtk as Gtk
+import           System.Directory (doesFileExist)
 import           System.Environment
 import           System.FilePath (pathSeparator)
 import           System.Glib.UTFString
@@ -56,19 +57,22 @@ createShiftGameWindow ctrl keyHandler widget = do
    return (window, ctrl)
 
 
--- todo: level choosing if input file is no valid level file
-
 main :: IO ()
 main = do
    _ <- initGUI
 
    -- read level
    args <- getArgs
-   levelPath <- if null args
-                  then do mbPath <- showSelectScenarioDialog :: IO (Maybe FilePath)
-                          return $ maybe "level.txt" id mbPath
-                  else return $ head args
-   mbScenStates <- readScenario levelPath
+   let paramLevelPath = if null args
+                          then "level.txt"
+                          else head args
+   levelFileExist <- doesFileExist paramLevelPath
+   mbLevelPath <- if levelFileExist
+                    then return (Just paramLevelPath)
+                    else do unless (null args) $
+                                putStrLn ("failed to load level file: " ++ paramLevelPath ++ "does not exist")
+                            showSelectScenarioDialog
+   mbScenStates <- maybe (return Nothing) (readScenario) mbLevelPath
    -- initialize window
    let scenStates = case mbScenStates of
                          Nothing -> [emptyScenarioState]
