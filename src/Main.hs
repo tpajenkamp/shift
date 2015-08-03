@@ -37,47 +37,19 @@ import ShiftGame.ScenarioController
 import ShiftGame.ShiftIO
 
 
-createTextViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO (Window, ctrl)
-createTextViewWindow sRef keyHandler = do
-   (scenSettings, ctrl) <- takeMVar sRef
-   
+createShiftGameWindow :: (WidgetClass w, ScenarioController ctrl MatrixScenario IO) => ctrl -> EventM EKey Bool -> w -> IO (Window, ctrl)
+createShiftGameWindow ctrl keyHandler widget = do
    window <- windowNew
    vbox <- vBoxNew False 0    -- main container for window
    Gtk.set window [ containerChild := vbox]
-   -- add text view
-   (textArea, ctrl) <- createTextBasedView ctrl
-   boxPackStart vbox textArea PackGrow 0
+   boxPackStart vbox widget PackGrow 0
    -- widget key focus, key event
-   widgetSetCanFocus textArea True
+   widgetSetCanFocus widget True
    -- add status bar
    (infobar, ctrl) <- createInfoBar ctrl
    boxPackStart vbox infobar PackRepel 0
    -- add keyboard listener
-   putMVar sRef (scenSettings, ctrl)
-   _ <- textArea `on` keyPressEvent $ keyHandler
-
-   -- finalize window
-   widgetShowAll window
-   return (window, ctrl)
-
-createGraphicsViewWindow :: (ScenarioController ctrl MatrixScenario IO) => MVar (ScenarioSettings MatrixScenario, ctrl) -> EventM EKey Bool -> IO (Window, ctrl)
-createGraphicsViewWindow sRef keyHandler = do
-   (scenSettings, ctrl) <- takeMVar sRef
-   let scenState = getScenarioFromPool scenSettings (currentScenario scenSettings)
-
-   window <- windowNew
-   vbox2 <- vBoxNew False 0    -- main container for window2
-   Gtk.set window [ containerChild := vbox2]
-   -- add graphical view
-   (canvas, ctrl) <- createGraphicsBasedView ctrl scenState
-   widgetSetCanFocus canvas True
-   boxPackStart vbox2 canvas PackGrow 0
-   -- add status bar
-   (infobar2, ctrl) <- createInfoBar ctrl
-   boxPackStart vbox2 infobar2 PackRepel 0
-   -- add keyboard listener
-   putMVar sRef (scenSettings, ctrl)
-   _ <- canvas `on` keyPressEvent $ keyHandler
+   _ <- widget `on` keyPressEvent $ keyHandler
 
    -- finalize window
    widgetShowAll window
@@ -107,8 +79,13 @@ main = do
 
    let keyHandler = keyboardHandler uRef sRef wRef
 
-   (win1, ctrl) <- createTextViewWindow sRef keyHandler
-   (win2, ctrl) <- createGraphicsViewWindow sRef keyHandler
+   (textArea, ctrl) <- createTextBasedView ctrl
+   (win1, ctrl) <- createShiftGameWindow ctrl keyHandler textArea
+
+   (canvas, ctrl) <- createGraphicsBasedView ctrl (getScenarioFromPool sc (currentScenario sc))
+   (win2, ctrl) <- createShiftGameWindow ctrl keyHandler canvas
+   
+   _ <- swapMVar sRef (sc, ctrl)
 
    _ <- win1 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
    _ <- win2 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
