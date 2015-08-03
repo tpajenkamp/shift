@@ -10,7 +10,6 @@ import           System.Directory
 import           System.FilePath
 import           System.Glib.UTFString
 
-import ShiftGame.Helpers
 import ShiftGame.GtkScenarioView
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
@@ -24,11 +23,12 @@ Gtk Dialog to choose level file
 showSelectScenarioDialog :: GlibFilePath fp => IO (Maybe fp)
 showSelectScenarioDialog = do
    chooser <- fileChooserDialogNew (Just "Select level...") Nothing FileChooserActionOpen [("_Cancel", ResponseCancel), ("_Open", ResponseAccept)]
-   catch (do wDir <- getCurrentDirectory
-             let lvlDir = wDir ++ pathSeparator : "levels"
-             lvlDirExist <- doesDirectoryExist lvlDir
-             fileChooserSetCurrentFolder chooser (if lvlDirExist then lvlDir else wDir)) (\(_ :: IOException) -> return False)
+   _ <- catch (do wDir <- getCurrentDirectory
+                  let lvlDir = wDir ++ pathSeparator : "levels"
+                  lvlDirExist <- doesDirectoryExist lvlDir
+                  fileChooserSetCurrentFolder chooser (if lvlDirExist then lvlDir else wDir)) (\(_ :: IOException) -> return False)
    fileChooserSetSelectMultiple chooser False
+   fileChooserSetLocalOnly chooser True
    dlgResponse <- dialogRun chooser
    widgetHide chooser
    returnVal <- if dlgResponse == ResponseAccept
