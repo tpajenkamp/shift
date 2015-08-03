@@ -46,7 +46,8 @@ selectScenarioFile uRef sRef = do
         Just fp -> do
            (scenSettings, ctrl) <- takeMVar sRef
            uic <- takeMVar uRef
-           newScenarios <- readScenario fp
+           mbNewScenarios <- readScenario fp :: IO (Maybe [ScenarioState MatrixScenario])
+           let newScenarios = maybe [] id mbNewScenarios :: [ScenarioState MatrixScenario]
            if (null newScenarios)
              then putMVar uRef uic >> putMVar sRef (scenSettings, ctrl) >> return False
              else do let newScenSettings = setScenarioPool scenSettings newScenarios

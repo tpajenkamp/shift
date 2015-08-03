@@ -29,12 +29,13 @@ runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenario
                         _ <- mapM evaluate myScenarioStates
                         putStrLn "warnings:"
                         putStrLn $ (unlines . map show . reverse . warnings) myParseState
-                        mapM displayScenarioData myScenarioStates
+                        _ <- mapM displayScenarioData myScenarioStates
                         return myScenarioStates -- todo: parse error
 
 
-readScenario :: FilePath -> IO [ScenarioState MatrixScenario]
+readScenario :: FilePath -> IO (Maybe [ScenarioState MatrixScenario])
 readScenario levelPath = do
-   levelRaw <- catch (B.readFile levelPath) (\(_ :: IOException) -> putStrLn ("failed to read level file " ++ levelPath) >> return B.empty)
-   runParser levelRaw
+   mbFileData <- catch ((liftM Just) (B.readFile levelPath))
+                       (\(_ :: IOException) -> putStrLn ("failed to read level file " ++ levelPath) >> return Nothing)
+   maybe (return Nothing) (liftM Just . runParser) mbFileData
 

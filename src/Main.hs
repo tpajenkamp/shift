@@ -68,11 +68,15 @@ main = do
                   then do mbPath <- showSelectScenarioDialog :: IO (Maybe FilePath)
                           return $ maybe "level.txt" id mbPath
                   else return $ head args
-   scenStates <- readScenario levelPath
+   mbScenStates <- readScenario levelPath
    -- initialize window
-   let scenState = case scenStates of [] -> emptyScenarioState; a:_ -> a
-       ctrl = initControllerState scenState :: ControllerState IO MatrixScenario
+   let scenStates = case mbScenStates of
+                         Nothing -> [emptyScenarioState]
+                         Just [] -> [emptyScenarioState]
+                         Just as -> as
        (uc, sc) = initSettings scenStates
+       currentScen = getScenarioFromPool sc (currentScenario sc) :: ScenarioState MatrixScenario
+       ctrl = initControllerState currentScen :: ControllerState IO MatrixScenario
    uRef <- newMVar uc            :: IO (MVar UserInputControl)
    sRef <- newMVar (sc, ctrl)    :: IO (MVar (ScenarioSettings MatrixScenario, ControllerState IO MatrixScenario))
    wRef <- newMVar []            :: IO (MVar [Window])
@@ -82,7 +86,7 @@ main = do
    (textArea, ctrl) <- createTextBasedView ctrl
    (win1, ctrl) <- createShiftGameWindow ctrl keyHandler textArea
 
-   (canvas, ctrl) <- createGraphicsBasedView ctrl (getScenarioFromPool sc (currentScenario sc))
+   (canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
    (win2, ctrl) <- createShiftGameWindow ctrl keyHandler canvas
    
    _ <- swapMVar sRef (sc, ctrl)
