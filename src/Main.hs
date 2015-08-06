@@ -38,17 +38,48 @@ import ShiftGame.ScenarioController
 import ShiftGame.ShiftIO
 
 
+createLevelSelector :: IO HBox
+createLevelSelector = do
+   -- widget creation
+   hbox <- hBoxNew False 4
+   prevLevelBtn  <- buttonNewWithLabel "<"
+   buttonSetFocusOnClick prevLevelBtn False
+   nextLevelBtn  <- buttonNewWithLabel ">"
+   buttonSetFocusOnClick nextLevelBtn False
+   resetLevelBtn <- buttonNewWithLabel "r"
+   buttonSetFocusOnClick resetLevelBtn False
+   openLevelBtn  <- buttonNewWithLabel "o"
+   buttonSetFocusOnClick openLevelBtn False
+   displayLevelLbl <- labelNew (Just "0/xxx")
+
+   -- packing
+   boxPackStart hbox prevLevelBtn PackNatural 0
+   boxPackStart hbox displayLevelLbl PackNatural 0
+   boxPackStart hbox nextLevelBtn PackNatural 0
+   boxPackEnd hbox resetLevelBtn PackNatural 0
+   boxPackEnd hbox openLevelBtn PackNatural 0
+
+   -- signals
+   prevLevelBtn `on` buttonActivated $ (putStrLn "want previous level")
+   nextLevelBtn `on` buttonActivated $ (putStrLn "want next level")
+   resetLevelBtn `on` buttonActivated $ (putStrLn "want reset level")
+   openLevelBtn `on` buttonActivated $ (putStrLn "want open level")
+   return hbox
+
 createShiftGameWindow :: (WidgetClass w, ScenarioController ctrl MatrixScenario IO) => ctrl -> EventM EKey Bool -> w -> IO (Window, ctrl)
 createShiftGameWindow ctrl keyHandler widget = do
    window <- windowNew
    vbox <- vBoxNew False 0    -- main container for window
    Gtk.set window [ containerChild := vbox]
+   levelBar <- createLevelSelector
+   boxPackStart vbox levelBar PackNatural 0
    boxPackStart vbox widget PackGrow 0
    -- widget key focus, key event
    widgetSetCanFocus widget True
+   widgetGrabFocus widget
    -- add status bar
    (infobar, ctrl) <- createInfoBar ctrl
-   boxPackStart vbox infobar PackRepel 0
+   boxPackEnd vbox infobar PackNatural 0
    -- add keyboard listener
    _ <- widget `on` keyPressEvent $ keyHandler
 
