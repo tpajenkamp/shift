@@ -1,0 +1,16 @@
+The following licenses apply for the specified level files:
+
+-----
+
+These sets may be freely distributed provided they remain properly credited.
+
+David W. Skinner	microban_by_David_W_Skinner.txt
+David W. Skinner	sasquatch_by_David_W_Skinner.txt
+
+-----
+
+Public Domain
+
+simple.txt
+warning_empty.txt
+warning_tests.txt
