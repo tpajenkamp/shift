@@ -133,7 +133,14 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
         else return sfc
       lift $ putMVar sfcRef nextSfc    
       lift $ postGUIAsync (do
-          when (w /= xSpan || h /= ySpan) (widgetSetSizeRequest widget xSpan ySpan)
+          -- find parent window, this way is not universal but shoul suffice in this scenario
+          -- further details can be found in the GTK documentation for gtk_widget_get_toplevel
+          mbParentWindow <- widgetGetAncestor widget gTypeWindow
+          -- resize widget and possibly parent window
+          when (w /= xSpan || h /= ySpan) (widgetSetSizeRequest widget xSpan ySpan
+               -- resize window to smallest possible size
+               >> maybe (return ()) (\w -> windowResize (castToWindow w) 1 1)
+               mbParentWindow)
           -- redraw scenario surface
           drawScenario imgs nextSfc scs
           widgetQueueDraw widget)
