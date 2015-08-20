@@ -24,7 +24,7 @@ import           Control.Monad.Trans
 import           Control.Monad.Trans.State.Lazy
 --import           Control.Monad.State.Lazy
 import           Data.Array  as A (array)
-import           Data.Attoparsec.ByteString as AP
+import qualified Data.Attoparsec.ByteString as AP
 import           Data.Attoparsec.ByteString.Char8 as APC
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
@@ -47,8 +47,8 @@ Floor 	(Space) 	0x20
 
 -}
 
-commentSymbol :: Char
-commentSymbol = ';'
+validChar :: Char -> Bool
+validChar c = elem c "#@+.$* "
 
 -- | Warnings and errors for parsing a scenario file.
 data ParseWarning = ObjectTargetMismatch Int Int Int   -- ^ number of objects does not fit number of targets: level id, number of objects, number of targets
@@ -152,7 +152,7 @@ createScenarioArrayList _ _ [] = []
 
 parseTestCommentLine :: StateT ParseState Parser Bool
 parseTestCommentLine = do
-   _ <- lift $ char commentSymbol
+   _ <- lift $ satisfy (not . validChar)
    lift $ AP.skipWhile (not . isEndOfLine)
    lift $ endOfLine <|> endOfInput
    return False
