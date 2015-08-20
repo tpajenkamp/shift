@@ -271,7 +271,7 @@ keyboardHandler uRef sRef wRef = do
              (err, ctrl') <- runStateT undoAction ctrl
              case err of
                   Just e -> do putMVar uRef keySettings
-                               putStrLn ("undo : " ++ show e)
+                               unless (e == NoAction) $ putStrLn ("undo : " ++ show e)
                   Nothing -> do putMVar uRef (keySettings & lensInputMode %~
                                     (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
              putMVar sRef (scenSettings, ctrl')
@@ -284,7 +284,7 @@ keyboardHandler uRef sRef wRef = do
              (err, ctrl') <- runStateT redoAction ctrl
              case err of
                   Just e -> do putMVar uRef keySettings
-                               putStrLn ("redo : " ++ show e)
+                               unless (e == NoAction) $ putStrLn ("redo : " ++ show e)
                   Nothing -> do putMVar uRef (keySettings & lensInputMode %~
                                     (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
              putMVar sRef (scenSettings, ctrl')
