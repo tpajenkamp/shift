@@ -38,8 +38,11 @@ import ShiftGame.ScenarioController
 import ShiftGame.ShiftIO
 
 
-createLevelSelector :: ScenarioController ctrl MatrixScenario IO => MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> IO HBox
-createLevelSelector uRef sRef = do
+getScenarioLevelDisplay :: ScenarioSettings sc -> String
+getScenarioLevelDisplay scenSettings = (show . (+1) . currentScenario) scenSettings ++ "/" ++ (show . length . scenarioPool) scenSettings
+
+createLevelSelector :: ScenarioController ctrl MatrixScenario IO => ctrl -> MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> IO (HBox, ctrl)
+createLevelSelector ctrl uRef sRef = do
    -- widget creation
    hbox <- hBoxNew False 4
    prevLevelBtn  <- buttonNewWithLabel "<"
@@ -50,7 +53,14 @@ createLevelSelector uRef sRef = do
    buttonSetFocusOnClick resetLevelBtn False
    openLevelBtn  <- buttonNewWithLabel "o"
    buttonSetFocusOnClick openLevelBtn False
-   displayLevelLbl <- labelNew (Just "0/xxx")
+
+   displayLevelLbl <- labelNew (Just "0/0")
+
+   let lblListener = LevelNewListener (\sRef' _ -> postGUIAsync $ do
+          scenVar@(scenSettings, _) <- takeMVar sRef'
+          labelSetText displayLevelLbl $ getScenarioLevelDisplay scenSettings
+          putMVar sRef' scenVar) sRef
+   ctrl' <- controllerAddListener ctrl lblListener
 
    -- packing
    boxPackStart hbox prevLevelBtn PackNatural 0
@@ -74,16 +84,20 @@ createLevelSelector uRef sRef = do
             case newScen of
                  Just (uic', scenVar') -> putMVar uRef uic' >> putMVar sRef scenVar'
                  Nothing -> putMVar uRef uic >> putMVar sRef scenVar
-   _ <- resetLevelBtn `on` buttonActivated $ (putStrLn "want reset level")
+   _ <- resetLevelBtn `on` buttonActivated $ do
+            scenVar@(scenSettings, ctrl) <- takeMVar sRef
+            uic <- takeMVar uRef
+            (uic', scenVar') <- resetCurrentScenarioLevel uic scenVar
+            putMVar uRef uic' >> putMVar sRef scenVar'
    _ <- openLevelBtn `on` buttonActivated $ void $ forkIO (void $ selectScenarioFile uRef sRef)
-   return hbox
+   return (hbox, ctrl')
 
 createShiftGameWindow :: (WidgetClass w, ScenarioController ctrl MatrixScenario IO) => ctrl -> EventM EKey Bool -> MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> w -> IO (Window, ctrl)
 createShiftGameWindow ctrl keyHandler uRef sRef widget = do
    window <- windowNew
    vbox <- vBoxNew False 0    -- main container for window
    Gtk.set window [ containerChild := vbox]
-   levelBar <- createLevelSelector uRef sRef
+   (levelBar, ctrl) <- createLevelSelector ctrl uRef sRef
    boxPackStart vbox levelBar PackNatural 0
    boxPackStart vbox widget PackGrow 0
    -- widget key focus, key event
@@ -224,13 +238,10 @@ keyboardHandler uRef sRef wRef = do
       -- reset current level
       else if (keyV `elem` keysReset keySettings)
       then lift $ forkIO (do
-             (scenSettings, ctrl) <- takeMVar sRef
+             var@(scenSettings, ctrl) <- takeMVar sRef
              keySettings <- takeMVar uRef
-             let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
-             (_, ctrl') <- runStateT (setScenario currentScen) ctrl
-             -- there may be a delayed level change -> enable player movement
-             putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
-             putMVar sRef (scenSettings, ctrl')
+             (keySettings', var') <- resetCurrentScenarioLevel keySettings var
+             putMVar uRef keySettings' >> putMVar sRef var'
            ) >> return True
       -- set next level in pool
       else if (keyV `elem` keysNext keySettings)

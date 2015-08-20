@@ -400,6 +400,23 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
        )
      return l
 
+
+{-
+Level id updater
+-}
+
+-- | Do something on 'notifyNew'. @storage@ may be a constant value or an 'MVar' or the like.
+data LevelNewListener sc storage m = LevelNewListener (storage -> ScenarioState sc -> m ()) storage
+
+instance (Monad m, Scenario sc) => UpdateListener (LevelNewListener sc ctrl m) m sc where
+  notifyUpdate l _ = return l
+  notifyNew l@(LevelNewListener action storage) = do
+      scState <- ask
+      lift $ action storage scState 
+      return l
+  notifyWin l = return l
+
+
 {-
 Other stuff
 -}
@@ -421,6 +438,13 @@ setPrevScenarioLevel uic (scenSettings, ctrl) =
              -- there may be a delayed level change -> enable player movement
              return $ Just (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings', ctrl'))
          Nothing -> return Nothing
+
+resetCurrentScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (UserInputControl, (ScenarioSettings MatrixScenario, ctrl))
+resetCurrentScenarioLevel uic (scenSettings, ctrl) = do
+    let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
+    (_, ctrl') <- runStateT (setScenario currentScen) ctrl
+    -- there may be a delayed level change -> enable player movement
+    return (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings, ctrl'))
 
 -- | Destroys all given windows and clears the @MVar@.
 quitAllWindows :: MVar [Window] -> IO ()
