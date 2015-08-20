@@ -127,7 +127,7 @@ main = do
    mbLevelPath <- if levelFileExist
                     then return (Just paramLevelPath)
                     else do unless (null args) $
-                                putStrLn ("failed to load level file: " ++ paramLevelPath ++ "does not exist")
+                                putStrLn ("failed to load level file: " ++ paramLevelPath ++ " does not exist")
                             showSelectScenarioDialog
    mbScenStates <- maybe (return Nothing) (readScenario) mbLevelPath
    -- initialize window
