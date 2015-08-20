@@ -38,8 +38,8 @@ import ShiftGame.ScenarioController
 import ShiftGame.ShiftIO
 
 
-createLevelSelector :: IO HBox
-createLevelSelector = do
+createLevelSelector :: ScenarioController ctrl MatrixScenario IO => MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> IO HBox
+createLevelSelector uRef sRef = do
    -- widget creation
    hbox <- hBoxNew False 4
    prevLevelBtn  <- buttonNewWithLabel "<"
@@ -60,18 +60,18 @@ createLevelSelector = do
    boxPackEnd hbox openLevelBtn PackNatural 0
 
    -- signals
-   prevLevelBtn `on` buttonActivated $ (putStrLn "want previous level")
-   nextLevelBtn `on` buttonActivated $ (putStrLn "want next level")
-   resetLevelBtn `on` buttonActivated $ (putStrLn "want reset level")
-   openLevelBtn `on` buttonActivated $ (putStrLn "want open level")
+   _ <- prevLevelBtn `on` buttonActivated $ (putStrLn "want previous level")
+   _ <- nextLevelBtn `on` buttonActivated $ (putStrLn "want next level")
+   _ <- resetLevelBtn `on` buttonActivated $ (putStrLn "want reset level")
+   _ <- openLevelBtn `on` buttonActivated $ void $ forkIO (void $ selectScenarioFile uRef sRef)
    return hbox
 
-createShiftGameWindow :: (WidgetClass w, ScenarioController ctrl MatrixScenario IO) => ctrl -> EventM EKey Bool -> w -> IO (Window, ctrl)
-createShiftGameWindow ctrl keyHandler widget = do
+createShiftGameWindow :: (WidgetClass w, ScenarioController ctrl MatrixScenario IO) => ctrl -> EventM EKey Bool -> MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> w -> IO (Window, ctrl)
+createShiftGameWindow ctrl keyHandler uRef sRef widget = do
    window <- windowNew
    vbox <- vBoxNew False 0    -- main container for window
    Gtk.set window [ containerChild := vbox]
-   levelBar <- createLevelSelector
+   levelBar <- createLevelSelector uRef sRef
    boxPackStart vbox levelBar PackNatural 0
    boxPackStart vbox widget PackGrow 0
    -- widget key focus, key event
@@ -119,10 +119,10 @@ main = do
    let keyHandler = keyboardHandler uRef sRef wRef
 
    (textArea, ctrl) <- createTextBasedView ctrl
-   (win1, ctrl) <- createShiftGameWindow ctrl keyHandler textArea
+   (win1, ctrl) <- createShiftGameWindow ctrl keyHandler uRef sRef textArea
 
    (canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
-   (win2, ctrl) <- createShiftGameWindow ctrl keyHandler canvas
+   (win2, ctrl) <- createShiftGameWindow ctrl keyHandler uRef sRef canvas
    
    _ <- swapMVar sRef (sc, ctrl)
 
