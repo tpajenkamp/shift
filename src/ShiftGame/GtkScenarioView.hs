@@ -38,13 +38,6 @@ import ShiftGame.ScenarioController
 
 -- MVar order: get (Scenario sc, ScenarioController ctrl m sc) => (MVar (ScenarioSettings sc, ctrl)) before (MVar UserInputControl) within a thread
 
-type ScenarioId = Int
-
-data ScenarioSettings sc = ScenarioSettings { scenarioPool    :: [ScenarioState sc] -- ^ loaded scenarios
-                                            , currentScenario :: ScenarioId         -- ^ id of current scenario in @scenarioPool@
-                                            } deriving (Eq, Show, Read)
-$(makeLensPrefixLenses ''ScenarioSettings)
-
 data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Show, Read, Enum)
 
 -- | When a scenario change is scheduled, stores the thread id of the stalling thread.
@@ -95,52 +88,6 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
       return l
   notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
   notifyWin l@(TextViewUpdateListener tBuffer) = return l
-
-
-
-setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> (ScenarioSettings sc)
-setScenarioPool cs s = cs & (lensScenarioPool .~ s) & (lensCurrentScenario .~ 0)
-
-setCurrentScenario :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioSettings sc, ScenarioState sc)
-setCurrentScenario cs sId =
-  if (sId > 0 && sId <= length (scenarioPool cs))
-    then Just (set lensCurrentScenario sId cs, scenarioPool cs !! sId)
-    else Nothing
-
-getScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> ScenarioState sc
-getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
-                              then scenarioPool cs !! sId
-                              else emptyScenarioState
-
-getScenarioFromPoolMaybe :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioState sc)
-getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
-                                   then Just $ scenarioPool cs !! sId
-                                   else Nothing
-
-increaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)
-increaseScenarioId cs = let currentScenarioId = currentScenario cs
-   in if isLastScenarioFromPool cs currentScenarioId
-        then Nothing
-        else Just (cs & lensCurrentScenario .~ currentScenarioId + 1, scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
-
-decreaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)
-decreaseScenarioId cs = let currentScenarioId = currentScenario cs
-   in if isFirstScenarioFromPool cs currentScenarioId
-        then Nothing
-        else Just (cs & lensCurrentScenario .~ currentScenarioId - 1, scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
-
-
-isFirstScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
-isFirstScenarioFromPool _ sId = sId <= 0
-
-isFirstScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc-> Bool
-isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario cs)
-
-isLastScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
-isLastScenarioFromPool cs sId = sId >= length (scenarioPool cs) - 1
-
-isLastScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc -> Bool
-isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (currentScenario cs)
 
 createTextViewLink :: TextBuffer -> TextViewUpdateListener
 createTextViewLink tBuffer = TextViewUpdateListener tBuffer
@@ -454,8 +401,26 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
      return l
 
 {-
-Keyboard Listener
+Other stuff
 -}
+
+setNextScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings MatrixScenario, ctrl)))
+setNextScenarioLevel uic (scenSettings, ctrl) =
+    case increaseScenarioId scenSettings of
+         Just (scenSettings', nextScen, _) -> do
+             (_, ctrl') <- runStateT (setScenario nextScen) ctrl
+             -- there may be a delayed level change -> enable player movement
+             return $ Just (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings', ctrl'))
+         Nothing -> return Nothing
+
+setPrevScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings MatrixScenario, ctrl)))
+setPrevScenarioLevel uic (scenSettings, ctrl) =
+    case decreaseScenarioId scenSettings of
+         Just (scenSettings', nextScen, _) -> do
+             (_, ctrl') <- runStateT (setScenario nextScen) ctrl
+             -- there may be a delayed level change -> enable player movement
+             return $ Just (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings', ctrl'))
+         Nothing -> return Nothing
 
 -- | Destroys all given windows and clears the @MVar@.
 quitAllWindows :: MVar [Window] -> IO ()

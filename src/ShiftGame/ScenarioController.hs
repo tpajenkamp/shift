@@ -24,6 +24,67 @@ import Control.Monad.Trans.State.Lazy
 import LensNaming
 import ShiftGame.Scenario
 
+{-
+Scenario Pool and its basic operations
+-}
+
+type ScenarioId = Int
+
+data ScenarioSettings sc = ScenarioSettings { scenarioPool    :: [ScenarioState sc] -- ^ loaded scenarios
+                                            , currentScenario :: ScenarioId         -- ^ id of current scenario in @scenarioPool@
+                                            } deriving (Eq, Show, Read)
+$(makeLensPrefixLenses ''ScenarioSettings)
+
+
+setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> (ScenarioSettings sc)
+setScenarioPool cs s = cs & (lensScenarioPool .~ s) & (lensCurrentScenario .~ 0)
+
+setCurrentScenario :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioSettings sc, ScenarioState sc)
+setCurrentScenario cs sId =
+  if (sId > 0 && sId <= length (scenarioPool cs))
+    then Just (set lensCurrentScenario sId cs, scenarioPool cs !! sId)
+    else Nothing
+
+getScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> ScenarioState sc
+getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
+                              then scenarioPool cs !! sId
+                              else emptyScenarioState
+
+getScenarioFromPoolMaybe :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioState sc)
+getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
+                                   then Just $ scenarioPool cs !! sId
+                                   else Nothing
+
+increaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)
+increaseScenarioId cs = let currentScenarioId = currentScenario cs
+   in if isLastScenarioFromPool cs currentScenarioId
+        then Nothing
+        else Just (cs & lensCurrentScenario .~ currentScenarioId + 1, scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
+
+decreaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)
+decreaseScenarioId cs = let currentScenarioId = currentScenario cs
+   in if isFirstScenarioFromPool cs currentScenarioId
+        then Nothing
+        else Just (cs & lensCurrentScenario .~ currentScenarioId - 1, scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
+
+
+isFirstScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
+isFirstScenarioFromPool _ sId = sId <= 0
+
+isFirstScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc-> Bool
+isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario cs)
+
+isLastScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
+isLastScenarioFromPool cs sId = sId >= length (scenarioPool cs) - 1
+
+isLastScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc -> Bool
+isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (currentScenario cs)
+
+
+{-
+Input-Model communication and model listeners
+-}
+
 -- | A listener that can be informed about @ScenarioUpdate@s.
 class UpdateListener u m sc | u -> m sc where
   notifyUpdate :: u -> ScenarioUpdate -> ReaderT (ScenarioState sc) m u

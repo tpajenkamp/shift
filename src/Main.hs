@@ -60,8 +60,20 @@ createLevelSelector uRef sRef = do
    boxPackEnd hbox openLevelBtn PackNatural 0
 
    -- signals
-   _ <- prevLevelBtn `on` buttonActivated $ (putStrLn "want previous level")
-   _ <- nextLevelBtn `on` buttonActivated $ (putStrLn "want next level")
+   _ <- prevLevelBtn `on` buttonActivated $ do
+            scenVar@(scenSettings, ctrl) <- takeMVar sRef
+            uic <- takeMVar uRef
+            newScen <- setPrevScenarioLevel uic scenVar
+            case newScen of
+                 Just (uic', scenVar') -> putMVar uRef uic' >> putMVar sRef scenVar'
+                 Nothing -> putMVar uRef uic >> putMVar sRef scenVar
+   _ <- nextLevelBtn `on` buttonActivated $ do
+            scenVar@(scenSettings, ctrl) <- takeMVar sRef
+            uic <- takeMVar uRef
+            newScen <- setNextScenarioLevel uic scenVar
+            case newScen of
+                 Just (uic', scenVar') -> putMVar uRef uic' >> putMVar sRef scenVar'
+                 Nothing -> putMVar uRef uic >> putMVar sRef scenVar
    _ <- resetLevelBtn `on` buttonActivated $ (putStrLn "want reset level")
    _ <- openLevelBtn `on` buttonActivated $ void $ forkIO (void $ selectScenarioFile uRef sRef)
    return hbox
@@ -216,8 +228,7 @@ keyboardHandler uRef sRef wRef = do
              keySettings <- takeMVar uRef
              let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
              (_, ctrl') <- runStateT (setScenario currentScen) ctrl
-             putStrLn "level reset"
-             -- there may be a delayed level change -> disable and enable player movement
+             -- there may be a delayed level change -> enable player movement
              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
              putMVar sRef (scenSettings, ctrl')
            ) >> return True
@@ -226,30 +237,20 @@ keyboardHandler uRef sRef wRef = do
       then lift $ forkIO (do
              var@(scenSettings, ctrl) <- takeMVar sRef
              keySettings <- takeMVar uRef
-             new <- case increaseScenarioId scenSettings of
-                         Just (scenSettings', nextScen, _) -> do
-                              (_, ctrl') <- runStateT (setScenario nextScen) ctrl
-                              -- there may be a delayed level change -> disable and enable player movement
-                              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
-                              putStrLn "next level"
-                              return (scenSettings', ctrl')
-                         Nothing -> putMVar uRef keySettings >> return var
-             putMVar sRef new
+             newScen <- setNextScenarioLevel keySettings var
+             case newScen of
+                  Just (keySettings', var') -> putMVar uRef keySettings' >> putMVar sRef var'
+                  Nothing -> putMVar uRef keySettings >> putMVar sRef var
            ) >> return True
       -- set previous level in pool
       else if (keyV `elem` keysPrev keySettings)
       then lift $ forkIO (do
              var@(scenSettings, ctrl) <- takeMVar sRef
              keySettings <- takeMVar uRef
-             new <- case decreaseScenarioId scenSettings of
-                         Just (scenSettings', prevScen, _) -> do
-                              (_, ctrl') <- runStateT (setScenario prevScen) ctrl
-                              -- there may be a delayed level change -> disable and enable player movement
-                              putMVar uRef (keySettings & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
-                              putStrLn "next level"
-                              return (scenSettings', ctrl')
-                         Nothing -> putMVar uRef keySettings >> return var
-             putMVar sRef new
+             newScen <- setPrevScenarioLevel keySettings var
+             case newScen of
+                  Just (keySettings', var') -> putMVar uRef keySettings' >> putMVar sRef var'
+                  Nothing -> putMVar uRef keySettings >> putMVar sRef var
            ) >> return True
       -- undo last move
       else if (keyV `elem` keysUndo keySettings)
@@ -262,7 +263,6 @@ keyboardHandler uRef sRef wRef = do
                                putStrLn ("undo : " ++ show e)
                   Nothing -> do putMVar uRef (keySettings & lensInputMode %~
                                     (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
-                                putStrLn "undo"
              putMVar sRef (scenSettings, ctrl')
            ) >> return True
       -- redo last undo
@@ -276,7 +276,6 @@ keyboardHandler uRef sRef wRef = do
                                putStrLn ("redo : " ++ show e)
                   Nothing -> do putMVar uRef (keySettings & lensInputMode %~
                                     (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
-                                putStrLn "redo"
              putMVar sRef (scenSettings, ctrl')
            ) >> return True
       -- open level file selection dialog
