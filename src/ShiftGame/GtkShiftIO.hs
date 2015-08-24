@@ -5,6 +5,7 @@ import           Control.Concurrent
 import           Control.Exception
 import           Control.Lens
 import           Control.Monad.Trans.State.Lazy
+import           Data.String
 import           Graphics.UI.Gtk hiding (get, set, rectangle)
 import           System.Directory
 import           System.FilePath
@@ -22,7 +23,7 @@ Gtk Dialog to choose level file
 -- | Asks the user to select a file. Only call this function from a thread that owns the Gtk lock!!!
 showSelectScenarioDialog :: GlibFilePath fp => IO (Maybe fp)
 showSelectScenarioDialog = do
-   chooser <- fileChooserDialogNew (Just "Select level...") Nothing FileChooserActionOpen [("_Cancel", ResponseCancel), ("_Open", ResponseAccept)]
+   chooser <- fileChooserDialogNew (Just (fromString "Select level...")) Nothing FileChooserActionOpen [(stockCancel, ResponseCancel), (stockOpen, ResponseAccept)]
    _ <- catch (do wDir <- getCurrentDirectory
                   let lvlDir = wDir ++ pathSeparator : "levels"
                   lvlDirExist <- doesDirectoryExist lvlDir
