@@ -254,8 +254,8 @@ askPlayerMove scs dir =
                    else -- The target Feature cannot be walked on, but it may be shifted away
                         case (shiftable ft, (not . isNothing) fs && targetable (fromJust fs)) of
                              (True, True)  ->        -- perform a shift and move the player
-                                  let (ft1, targetChange1) = combineFeatures ft            Floor
-                                      (ft2, targetChange2) = combineFeatures (fromJust fs) ft
+                                  let (ft1, targetChange1) = combineFeatures ft            Floor  -- remove feature from current position
+                                      (ft2, targetChange2) = combineFeatures (fromJust fs) ft     -- add feature to target position
                                   in Right  $ ScenarioUpdate { changedFeatures = [(p, fromMaybe Floor (getFeature sc p)), (tp, ft1), (cs, ft2)]
                                                              , newPlayerCoord = tp
                                                              , newEmptyTargets = emptyTargets scs + targetChange1 + targetChange2
@@ -272,7 +272,7 @@ askPlayerMove scs dir =
 -- === See also
 -- > redo
 undo :: Scenario sc => ScenarioState sc    -- ^ current scenario state
-                    -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ @ScenarioUpdate@ that leads to updated @ScenarioState@ on success
+                    -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ on success: @ScenarioUpdate@ that leads to updated @ScenarioState@
 undo scs = do 
     a <- case pastMoveStack scs of                       -- action to undo
               [] -> Left NoAction
@@ -319,7 +319,7 @@ undo scs = do
 -- === See also
 -- > undo
 redo  :: Scenario sc => ScenarioState sc    -- ^ current scenario state
-                     -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ @ScenarioUpdate@ that leads to updated @ScenarioState@ on success
+                     -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ on success: @ScenarioUpdate@ that leads to updated @ScenarioState@
 redo scs = case futureMoveQueue scs of
                 [] -> Left NoAction
                 a:_ -> let dir = direction a
@@ -352,6 +352,8 @@ updateScenario scs u = do let sc = scenario scs
                                       & lensScenario .~ nextScenario
                                       & lensEmptyTargets .~ newEmptyTargets u
                                       & lensSpentSteps .~ updatedSteps u
+                                      -- on regular move: add player action to pastMoveStack, clear futureMoveQueue
+                                      -- performedPlayerAction is 'Nothing' (used by undo and redo): do not change stacks
                                       & lensPastMoveStack %~ (\st -> case performedPlayerAction u of
                                                                           Nothing -> st
                                                                           Just a  -> a : st)
