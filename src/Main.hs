@@ -70,21 +70,21 @@ createLevelSelector ctrl uRef sRef = do
    boxPackEnd hbox openLevelBtn PackNatural 0
 
    -- signals
-   _ <- prevLevelBtn `on` buttonActivated $ do
+   _ <- prevLevelBtn `on` buttonActivated $ void $ forkIO $ do 
             scenVar@(scenSettings, ctrl) <- takeMVar sRef
             uic <- takeMVar uRef
             newScen <- setPrevScenarioLevel uic scenVar
             case newScen of
                  Just (uic', scenVar') -> putMVar uRef uic' >> putMVar sRef scenVar'
                  Nothing -> putMVar uRef uic >> putMVar sRef scenVar
-   _ <- nextLevelBtn `on` buttonActivated $ do
+   _ <- nextLevelBtn `on` buttonActivated $ void $ forkIO $ do 
             scenVar@(scenSettings, ctrl) <- takeMVar sRef
             uic <- takeMVar uRef
             newScen <- setNextScenarioLevel uic scenVar
             case newScen of
                  Just (uic', scenVar') -> putMVar uRef uic' >> putMVar sRef scenVar'
                  Nothing -> putMVar uRef uic >> putMVar sRef scenVar
-   _ <- resetLevelBtn `on` buttonActivated $ do
+   _ <- resetLevelBtn `on` buttonActivated $ void $ forkIO $ do 
             scenVar@(scenSettings, ctrl) <- takeMVar sRef
             uic <- takeMVar uRef
             (uic', scenVar') <- resetCurrentScenarioLevel uic scenVar
