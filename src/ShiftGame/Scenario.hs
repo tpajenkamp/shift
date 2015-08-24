@@ -84,6 +84,7 @@ combineFeatures _       new     = (new,      0)
 -- | Scenario coordinates @(x, y)@.
 type Coord = (Int, Int)
 
+-- | Extract direction from a move or shift.
 direction :: CharacterReaction -> PlayerMovement
 direction (RMove dir) = dir
 direction (RShift dir) = dir
@@ -159,6 +160,7 @@ showFeature Object  = '$'
 showFeature Target  = '.'
 showFeature TargetX = '*'
 
+-- | Character representation of the player on a certain feature.
 combinePlayerAndFeature :: Feature -> Char
 combinePlayerAndFeature Target =  '+'    -- Target
 combinePlayerAndFeature Wall   =  '@'    -- Floor
@@ -172,10 +174,11 @@ showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) 
         lineLength = xh - xl + 1
         seedFunc :: (Int, Int) -> Maybe (Char, (Int, Int))
         seedFunc c@(x, y)
-          | y > yh      = Nothing                   -- finished last row
+          | y > yh      = Nothing                    -- finished last row
           | x == xh + 1 = Just ('\n', (xl, y+1))     -- end of row: linebreak and continue at next row
           | otherwise   = Just (showFeature (mat!c), (x+1, y))    -- next character in row
 
+-- | Converts a @MatrtixScenario@ into a easily readable string and displays the player on the given coordinate.
 showScenarioWithPlayer :: MatrixScenario -> Coord -> ByteString
 showScenarioWithPlayer (MatrixScenario mat) pC = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (xl, yl)
   --                                                                 #rows + 1 for line breaks
@@ -183,7 +186,7 @@ showScenarioWithPlayer (MatrixScenario mat) pC = fst $ B.unfoldrN ((lineLength) 
         lineLength = xh - xl + 1
         seedFunc :: Coord -> Maybe (Char, Coord)
         seedFunc c@(x, y)
-          | y > yh      = Nothing                   -- finished last row
+          | y > yh      = Nothing                    -- finished last row
           | x == xh + 1 = Just ('\n', (xl, y+1))     -- end of row: linebreak and continue at next row
           | c == pC     = Just (combinePlayerAndFeature (mat!c), (x+1, y))
           | otherwise   = Just (showFeature (mat!c), (x+1, y))    -- next character in row
@@ -201,6 +204,16 @@ data ScenarioState sc = ScenarioState
                         } deriving (Eq, Show, Read)
 $(makeLensPrefixLenses ''ScenarioState)
 
+
+-- | Creates an empty @ScenarioState@.
+emptyScenarioState :: Scenario sc => ScenarioState sc
+emptyScenarioState = ScenarioState (0, 0) (createEmptyScenario) 0 (0, 0) [] []
+
+-- | Tests if the @Scenario@ of a @ScenarioState@ is finished.
+isWinningState :: ScenarioState sc -> Bool
+isWinningState scs = emptyTargets scs == 0
+
+
 -- | A storage for everything that changed within a 'ScenarioState'.
 --   This includes the previous and current player position and their underlying @Feature@s.
 -- === See also
@@ -210,80 +223,16 @@ data ScenarioUpdate = ScenarioUpdate
                                                               --   and the corresponding @Feature@ is the @Feature@ after the update
                       , newPlayerCoord  :: Coord              -- ^ the player coordinates after the update
                       , newEmptyTargets :: Int                -- ^ the total amount of unoccupied targets after the update
-                      , updatedSteps    :: (Int, Int)         -- ^ effective and total number of steps
+                      , updatedSteps    :: (Int, Int)         -- ^ effective and total number of steps (total number counts undos and redos)
                       , performedPlayerAction    :: Maybe CharacterReaction -- ^ the action type or @Nothing@ if it should not change the stored movement queue
                       } deriving (Eq, Show, Read)
 $(makeLensPrefixLenses ''ScenarioUpdate)
 
-emptyScenarioState :: Scenario sc => ScenarioState sc
-emptyScenarioState = ScenarioState (0, 0) (createEmptyScenario) 0 (0, 0) [] []
-
--- | Undo the last movement, returns the changed state or 'Nothing' if no previous action is recorded.
-undo :: Scenario sc => ScenarioState sc -> Either DenyReason (ScenarioUpdate, ScenarioState sc)
-undo scs = do 
-    a <- case pastMoveStack scs of                       -- action to undo
-              [] -> Left NoAction
-              a:_ -> return a
-    let dir = direction a                                -- last performed move direction
-        backstep = revertMovement dir                    -- direction to move to previous direction
-        playercoord = playerCoord scs                    -- current player coordinates
-        backcoord = moveCoordinate backstep playercoord  -- previous player position
-        sc = scenario scs
-        (steps, steps') = spentSteps scs                 -- current (effective steps, total steps)
-    plFeature <- case getFeature sc playercoord of       -- feature at player position
-                      Just ft -> return ft
-                      Nothing -> Left OutsideWorld
-    plFeature' <- case getFeature sc backcoord of        -- feature at previous player position
-                       Just ft -> return ft
-                       Nothing -> Left OutsideWorld
-    unless (walkable plFeature') $
-        Left PathBlocked
-    update <- case a of
-                   (RMove _) -> return $ ScenarioUpdate [(playercoord, plFeature), (backcoord, plFeature')]
-                                             backcoord (emptyTargets scs) (steps-1, steps'+1) Nothing
-                   (RShift _) -> do
-                       let backshiftFrom = moveCoordinate dir playercoord
-                       backshiftFeature <- case getFeature sc backshiftFrom of
-                                                Just ft -> return ft
-                                                Nothing -> Left OutsideWorld
-                       unless (targetable plFeature) $
-                           Left ShiftBlocked
-                       unless (shiftable backshiftFeature) $
-                           Left InvalidMove
-                       let (newFeatureP, chg)   = combineFeatures plFeature backshiftFeature
-                           (newFeatureP', chg') = combineFeatures backshiftFeature Floor
-                       return $ ScenarioUpdate [(playercoord, newFeatureP), (backcoord, plFeature'), (backshiftFrom, newFeatureP')]
-                                    backcoord (view lensEmptyTargets scs + chg + chg') (steps-1, steps'+1) Nothing
-    scs' <- updateScenario (scs & lensSpentSteps .~ (steps-1, steps' + 1)
-                                & lensPastMoveStack %~ tail
-                                & lensFutureMoveQueue %~  (a:)) update
-    Right (update, scs')
-
-
-redo  :: Scenario sc => ScenarioState sc -> Either DenyReason (ScenarioUpdate, ScenarioState sc)
-redo scs = case futureMoveQueue scs of
-                [] -> Left NoAction
-                a:_ -> let dir = direction a
-                       in case askPlayerMove scs dir of
-                               Left r -> Left r
-                               Right update -> do
-                                   let update' = update & lensPerformedPlayerAction .~ Nothing
-                                   scs' <- updateScenario (scs & lensPastMoveStack %~ (a:)
-                                                               & lensFutureMoveQueue %~ tail
-                                                               ) update'
-                                   Right (update', scs')
-
-
--- | Tests if the @Scenario@ of a @ScenarioState@ is finished.
-isWinningState :: ScenarioState sc -> Bool
-isWinningState scs = emptyTargets scs == 0
-
-
 -- | Tests whether a player move can be performed and computes the result.
---   Returns a @Left 'DenyReason'@ if the move is not possible and a
+--   Returns a @Left DenyReason@ if the move is not possible and a
 --   @Right 'ScenarioUpdate'@ with the resulting changes otherwise.
 -- === See also
--- > 'updateScenario'
+-- > 'updateScenario', 'DenyReason'
 askPlayerMove :: Scenario sc => ScenarioState sc -> PlayerMovement -> Either DenyReason ScenarioUpdate
 askPlayerMove scs dir =
     do let sc = scenario scs
@@ -294,7 +243,7 @@ askPlayerMove scs dir =
                      cs = moveCoordinate dir tp             -- shift target coord
                      fs :: Maybe Feature
                      fs = getFeature sc cs                  -- shift target feature
-                     (steps, steps') = spentSteps scs  -- effective and total steps so far
+                     (steps, steps') = spentSteps scs       -- effective and total steps so far
                  if walkable ft
                    then -- Move the player onto the target Feature
                         Right ScenarioUpdate { changedFeatures = [(p, fromMaybe Floor (getFeature sc p)), (tp, ft)]
@@ -315,6 +264,74 @@ askPlayerMove scs dir =
                              (True, False) -> Left ShiftBlocked     -- Shift target space is blocked
                              _ -> Left PathBlocked                  -- Feature cannot be shifted
          else Left OutsideWorld
+
+
+-- | Undo the last movement, returns the changed state or @Left NoAction@ if no previous action is recorded.
+--
+--   If the @DenyReason@ is not 'NoAction' it is an indicator for an inconsistent game state.
+-- === See also
+-- > redo
+undo :: Scenario sc => ScenarioState sc    -- ^ current scenario state
+                    -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ @ScenarioUpdate@ that leads to updated @ScenarioState@ on success
+undo scs = do 
+    a <- case pastMoveStack scs of                       -- action to undo
+              [] -> Left NoAction
+              a:_ -> return a
+    let dir = direction a                                -- last performed move direction
+        backstep = revertMovement dir                    -- direction to move to previous direction
+        playercoord = playerCoord scs                    -- current player coordinates
+        backcoord = moveCoordinate backstep playercoord  -- previous player position
+        sc = scenario scs
+        (steps, steps') = spentSteps scs                 -- current (effective steps, total steps)
+    plFeature <- case getFeature sc playercoord of       -- feature at player position
+                      Just ft -> return ft
+                      Nothing -> Left OutsideWorld
+    plFeature' <- case getFeature sc backcoord of        -- feature at previous player position
+                       Just ft -> return ft
+                       Nothing -> Left OutsideWorld
+    unless (walkable plFeature') $                       -- sanity check
+        Left PathBlocked
+    update <- case a of
+                   (RMove _) -> return $ ScenarioUpdate [(playercoord, plFeature), (backcoord, plFeature')]
+                                             backcoord (emptyTargets scs) (steps-1, steps'+1) Nothing
+                   (RShift _) -> do
+                       let backshiftFrom = moveCoordinate dir playercoord
+                       backshiftFeature <- case getFeature sc backshiftFrom of
+                                                Just ft -> return ft
+                                                Nothing -> Left OutsideWorld
+                       unless (targetable plFeature) $   -- sanity check
+                           Left ShiftBlocked
+                       unless (shiftable backshiftFeature) $    -- sanity check
+                           Left InvalidMove
+                       let (newFeatureP, chg)   = combineFeatures plFeature backshiftFeature
+                           (newFeatureP', chg') = combineFeatures backshiftFeature Floor
+                       return $ ScenarioUpdate [(playercoord, newFeatureP), (backcoord, plFeature'), (backshiftFrom, newFeatureP')]
+                                    backcoord (view lensEmptyTargets scs + chg + chg') (steps-1, steps'+1) Nothing
+    scs' <- updateScenario (scs & lensSpentSteps .~ (steps-1, steps' + 1)
+                                & lensPastMoveStack %~ tail
+                                & lensFutureMoveQueue %~  (a:)) update
+    Right (update, scs')
+
+-- | Redo the last undone movement, returns the changed state or @Left NoAction@ if no undone action is recorded.
+--
+--   If the @DenyReason@ is not 'NoAction' it is an indicator for an inconsistent game state.
+--
+-- === See also
+-- > undo
+redo  :: Scenario sc => ScenarioState sc    -- ^ current scenario state
+                     -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ @ScenarioUpdate@ that leads to updated @ScenarioState@ on success
+redo scs = case futureMoveQueue scs of
+                [] -> Left NoAction
+                a:_ -> let dir = direction a
+                       in case askPlayerMove scs dir of
+                               Left r -> Left r
+                               Right update -> do
+                                   let update' = update & lensPerformedPlayerAction .~ Nothing
+                                   scs' <- updateScenario (scs & lensPastMoveStack %~ (a:)
+                                                               & lensFutureMoveQueue %~ tail
+                                                               ) update'
+                                   Right (update', scs')
+
 
 
 -- | Performs a @ScenarioUpdate@ on the given @ScenarioState@.

@@ -28,55 +28,77 @@ import ShiftGame.Scenario
 Scenario Pool and its basic operations
 -}
 
+-- | Id of a 'Scenario' within a 'ScenarioSettings' object.
 type ScenarioId = Int
 
+-- | Storage for a bunch of @Scenario@s and the id of the currently active scenario.
 data ScenarioSettings sc = ScenarioSettings { scenarioPool    :: [ScenarioState sc] -- ^ loaded scenarios
-                                            , currentScenario :: ScenarioId         -- ^ id of current scenario in @scenarioPool@
+                                            , currentScenario :: ScenarioId         -- ^ id of current scenario in @scenarioPool@, starting with @0@
                                             } deriving (Eq, Show, Read)
 $(makeLensPrefixLenses ''ScenarioSettings)
 
-
+-- | Sets the stored scenarios. All previous scenarios are discarded and the current scenario is set to the first.
 setScenarioPool :: Scenario sc => ScenarioSettings sc -> [ScenarioState sc] -> (ScenarioSettings sc)
 setScenarioPool cs s = cs & (lensScenarioPool .~ s) & (lensCurrentScenario .~ 0)
 
-setCurrentScenario :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioSettings sc, ScenarioState sc)
+-- | Sets the currently selected scenario. Returns 'Nothing' if the given @ScenarioId@ is outside range.
+setCurrentScenario :: Scenario sc => ScenarioSettings sc    -- ^ Current @ScenarioSettings@ object
+                                  -> ScenarioId             -- ^ id of the new current scenario
+                                  -> Maybe (ScenarioSettings sc, ScenarioState sc)    -- ^ updated input @ScenarioSettings@ and the scenario of the given id
 setCurrentScenario cs sId =
   if (sId > 0 && sId <= length (scenarioPool cs))
     then Just (set lensCurrentScenario sId cs, scenarioPool cs !! sId)
     else Nothing
 
-getScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> ScenarioState sc
+-- | Returns the scenario of the given id. Returns a default empty scenario if the id is outside range.
+--
+--   Use 'getScenarioFromPoolMaybe' to get feedback on the range.
+getScenarioFromPool :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
+                                   -> ScenarioId             -- ^ requested scenario id
+                                   -> ScenarioState sc       -- ^ selected scenario
 getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
                               then scenarioPool cs !! sId
                               else emptyScenarioState
 
-getScenarioFromPoolMaybe :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Maybe (ScenarioState sc)
+-- | Returns the scenario of the given id. Returns 'Nothing' if the id is outside range.
+--
+--   Use 'getScenarioFromPool' to get a default scenario in case of failure.
+getScenarioFromPoolMaybe :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
+                                        -> ScenarioId             -- ^ requested scenario id
+                                        -> Maybe (ScenarioState sc)    --  ^ selected scenario
 getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
                                    then Just $ scenarioPool cs !! sId
                                    else Nothing
 
-increaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)
+-- | Sets the next scenario in the scenario pool to be the current scenario. Returns 'Nothing' if there is no next scenario.
+increaseScenarioId :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
+                                  -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)    -- ^ updated @ScenarioSettings@, next scenario and its id
 increaseScenarioId cs = let currentScenarioId = currentScenario cs
    in if isLastScenarioFromPool cs currentScenarioId
         then Nothing
         else Just (cs & lensCurrentScenario .~ currentScenarioId + 1, scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
 
-decreaseScenarioId :: Scenario sc => ScenarioSettings sc -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)
+-- | Sets the previous scenario in the scenario pool to be the current scenario. Returns 'Nothing' if there is no previous scenario.
+decreaseScenarioId :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
+                                  -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)    -- ^ updated @ScenarioSettings@, previous scenario and its id
 decreaseScenarioId cs = let currentScenarioId = currentScenario cs
    in if isFirstScenarioFromPool cs currentScenarioId
         then Nothing
         else Just (cs & lensCurrentScenario .~ currentScenarioId - 1, scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
 
-
+-- | Returns 'True' if and only if there is no scenario after the specified scenario in the scenario pool.
 isFirstScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
 isFirstScenarioFromPool _ sId = sId <= 0
 
+-- | Returns 'True' if and only if there is no scenario after the current scenario in the scenario pool.
 isFirstScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc-> Bool
 isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario cs)
 
+-- | Returns 'True' if and only if there is no scenario before the specified scenario in the scenario pool.
 isLastScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
 isLastScenarioFromPool cs sId = sId >= length (scenarioPool cs) - 1
 
+-- | Returns 'True' if and only if there is no scenario before the current scenario in the scenario pool.
 isLastScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc -> Bool
 isLastScenarioFromPoolCurrent cs = isLastScenarioFromPool cs (currentScenario cs)
 
@@ -87,9 +109,18 @@ Input-Model communication and model listeners
 
 -- | A listener that can be informed about @ScenarioUpdate@s.
 class UpdateListener u m sc | u -> m sc where
+  -- | Notification about an update in the scenario (usually a player movement).
+  --
+  --   The expected return value is the possibly changed listener after processing the event.
   notifyUpdate :: u -> ScenarioUpdate -> ReaderT (ScenarioState sc) m u
   notifyUpdate u _ = notifyNew u
+  -- | Notification about a new scenario or a scenario reset. All previous data is considered invalid.
+  --
+  --   The expected return value is the possibly changed listener after processing the event.
   notifyNew    :: u -> ReaderT (ScenarioState sc) m u
+  -- | Notification about the end of a scenario because the player has won. Is sent after the corresponding 'notifyUpdate'.
+  --
+  --   The expected return value is the possibly changed listener after processing the event.
   notifyWin    :: u -> ReaderT (ScenarioState sc) m u
 
 -- | A wrapper for any 'UpdateListener' data.
@@ -133,17 +164,24 @@ class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl 
     redoAction :: StateT ctrl m (Maybe DenyReason)
     redoAction = return (Just ActionUnsupported)
 
-controllerSetScenario :: (Scenario sc, Functor m, ScenarioController ctrl sc m) => ctrl -> ScenarioState sc -> m ctrl
+-- | Sets the scenario in the internal controller state.
+controllerSetScenario :: (Scenario sc, Functor m, ScenarioController ctrl sc m) => ctrl                -- ^ current controller
+                                                                                -> ScenarioState sc    -- ^ new scenario
+                                                                                -> m ctrl              -- ^ updated controller
 controllerSetScenario ctrl s = (fmap snd) $ runStateT (setScenario s) ctrl
 
-controllerAddListener :: (Scenario sc, Functor m, ScenarioController ctrl sc m, UpdateListener u m sc) => ctrl -> u -> m ctrl
+-- | Adds a listener to the controller. The new listener is informed about the current state.
+controllerAddListener :: (Scenario sc, Functor m, ScenarioController ctrl sc m, UpdateListener u m sc) => ctrl      -- ^ current controller
+                                                                                                       -> u         -- ^ new listener
+                                                                                                       -> m ctrl    -- ^ updated controller
 controllerAddListener ctrl l = (fmap snd) $ runStateT (addListener l) ctrl
 
+-- | Creates a new controller with the given scenario.
 initController :: (Functor m, ScenarioController ctrl sc m, UpdateListener u m sc) => ScenarioState sc -> u -> m ctrl
 initController sc lst = fmap snd $ runStateT (addListener lst) (initControllerState sc)
 
 -- | The state of a controller handling communication between model and view
-data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc       -- ^ the game state
+data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc           -- ^ the game state
                                             , listeners     :: [UpdateListenerType m sc]  -- ^ all known listeners
                                             }
 $(makeLensPrefixLenses ''ControllerState)
@@ -153,8 +191,6 @@ instance Show sc => Show (ControllerState m sc) where
     show (ControllerState scen lst) = "ControllerState {scenarioState = " ++ show scen ++ ", listeners = (" ++ (show . length) lst ++ "listeners )}"
 
 
--- todo: not working, m and sc need to be derived from ctrl
--- otherwise it is required to work with EVERY monad and scenario type
 instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc m where
     getControllerScenarioState = scenarioState
     initControllerState = flip ControllerState []
@@ -162,7 +198,7 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                             let s = scenarioState cs
                             case askPlayerMove s move of
                                  (Left reason) -> (return . Just) reason    -- propagate reason for invalid move
-                                 (Right update) -> do                  -- update internal ScenarioState
+                                 (Right update) -> do                       -- update internal ScenarioState
                                      let (Right s') = updateScenario s update
                                      put $ set lensScenarioState s' cs
                                      cs' <- get
@@ -175,12 +211,11 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                                      modify (\cs -> set lensListeners lst' cs)
                                      return Nothing
     addListener l = do cs <- get
-                       l' <- lift $ runReaderT (notifyNew l) (scenarioState cs)
+                       l' <- lift $ runReaderT (notifyNew l) (scenarioState cs)    -- inform new listener
                        modify (\cs -> over lensListeners (UpdateListenerType l' :) cs)
                        return ()
     setScenario sc = do modify (\cs -> set lensScenarioState sc cs)
                         cs <- get
-                        -- todo: lens traverse
                         lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs) . notifyNew) (listeners cs)
                         modify (\cs -> set lensListeners lst cs)
                         return ()
@@ -189,7 +224,6 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                          Left r -> (return . Just) r
                          Right (u, scs) -> do put (set lensScenarioState scs cs)
                                               cs' <- get
-                                              -- todo: lens traverse:
                                               lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
                                               modify (\cs -> set lensListeners lst cs)
                                               return Nothing
@@ -198,7 +232,6 @@ instance (Scenario sc, Monad m) => ScenarioController (ControllerState m sc) sc 
                          Left r -> (return . Just) r
                          Right (u, scs) -> do put (set lensScenarioState scs cs)
                                               cs' <- get
-                                              -- todo: lens traverse:
                                               lst <- lift $ sequence $ map (flip runReaderT (scenarioState cs') . flip notifyUpdate u) (listeners cs)
                                               -- test winning condition
                                               lst' <- if (isWinningState scs)
