@@ -148,98 +148,99 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
   notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
   notifyWin l = return l
 
+
+-- | RGBA color components.
+type CairoColor = (Double, Double, Double, Double)
+
+-- | Renders the whole content of a @ScenarioState@ onto a surface.
 scenarioRender :: ImagePool -> ScenarioState MatrixScenario -> Cairo.Render ()
 scenarioRender imgs scs = do
-    -- paint magent rectangle for invalid textures
+    -- paint background
     (cx1, cy1, cx2, cy2) <- Cairo.clipExtents
     Cairo.rectangle cx1 cy1 cx2 cy2
-    Cairo.setSourceRGB 1.0 0.0 1.0
+    Cairo.setSourceRGB 0.0 0.0 0.0
     Cairo.fill
     -- paint scenario map
     let (l@(lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
-    sequence_ $ map (drawFeature l) [(x, y) | x <- [lx..hx], y <- [ly..hy]]
+    sequence_ $ map (drawFeature imgs l) $
+        [((x, y), fromMaybe Wall $ getFeature (scenario scs) (x, y)) | x <- [lx..hx], y <- [ly..hy]]
     -- paint player
-    drawPlayer l (playerCoord scs)
-  where drawFeature :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
-        drawFeature (lx, ly) c@(x, y) = case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (featureMap imgs) of
-            Just sfc -> let xc = (fromIntegral (x - lx)) * 48
-                            yc = (fromIntegral (y - ly)) * 48
-                        in do w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth sfc  :: Cairo.Render Double
-                              h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight sfc :: Cairo.Render Double
-                              Cairo.save >> Cairo.rectangle xc yc (min 48 w) (min 48 h) >> Cairo.clip
-                              Cairo.setSourceSurface sfc xc yc >> Cairo.paint >> Cairo.restore
-            Nothing -> return ()
-        drawPlayer :: (Int, Int) -> (Int, Int) -> Cairo.Render ()
-        drawPlayer (lx, ly) c@(x, y) =
-            let xc = (fromIntegral (x - lx)) * 48
-                yc = (fromIntegral (y - ly)) * 48
-            in do img <- case M.lookup (fromMaybe Wall $ getFeature (scenario scs) c) (playerMap imgs) of
-                              Just sfc -> return sfc
-                              Nothing -> return (playerImg imgs)
-                  w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth img  :: Cairo.Render Double
-                  h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight img :: Cairo.Render Double
-                  Cairo.save >> Cairo.rectangle xc yc (min 48 w) (min 48 h) >> Cairo.clip
-                  Cairo.setSourceSurface img xc yc >> Cairo.paint >> Cairo.restore  
+    let pCoord = playerCoord scs
+    void $ drawFeatureWithPlayer imgs l (pCoord, fromMaybe Wall $ getFeature (scenario scs) pCoord)
                               
-
+-- | Renders the changes of a @ScenarioUpdate@ onto a surface.
 scenarioUpdateRender :: ImagePool                    -- ^ single sprites
                      -> ScenarioUpdate               -- ^ new scenario state
-                     -> (Int, Int)                   -- ^ lower (x, y) scenario bounds
-                     -> Cairo.Render (Cairo.Region)
-scenarioUpdateRender imgs u (lx, ly) = do
+                     -> (Int, Int)                   -- ^ lower /(x, y)/ scenario bounds
+                     -> Cairo.Render (Cairo.Region)  -- ^ surface areas that changed and should be invalidated
+scenarioUpdateRender imgs u lowCoords = do
     -- overpaint given coordinates
     let pc = newPlayerCoord u
         -- find current player position in update list
         (pCoord, pNotCoord) = partition (\(c, _) -> c == pc) (changedFeatures u)
-    inval  <- sequence $ map drawFeature pNotCoord
-    inval' <- sequence $ map drawPlayer pCoord
+    inval  <- sequence $ map (drawFeature imgs lowCoords) pNotCoord
+    inval' <- sequence $ map (drawFeatureWithPlayer imgs lowCoords) pCoord
     Cairo.regionCreateRectangles (inval ++ inval')
-  where drawFeature :: (Coord, Feature) -> Cairo.Render Cairo.RectangleInt
-        drawFeature ((x, y), ft) = do
-            let xc = (x - lx) * 48
-                yc = (y - ly) * 48
-                xcd = fromIntegral xc :: Double
-                ycd = fromIntegral yc :: Double
-            case M.lookup ft (featureMap imgs) of
-                 Just sfc -> do w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth sfc  :: Cairo.Render Double
-                                h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight sfc :: Cairo.Render Double
-                                Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
-                                Cairo.setSourceSurface sfc xcd ycd >> Cairo.paint >> Cairo.restore
-                 Nothing -> renderEmptyRect xcd ycd 48 48 (1.0, 0.0, 1.0, 1.0)
-            return $ Cairo.RectangleInt xc yc 48 48
-        drawPlayer :: (Coord, Feature) -> Cairo.Render Cairo.RectangleInt
-        drawPlayer item@((x, y), ft) = do
-            let xc = (x - lx) * 48
-                yc = (y - ly) * 48
-                xcd = fromIntegral xc
-                ycd = fromIntegral yc
-            img <- case M.lookup ft (playerMap imgs) of
-                        -- draw combined "Feature+Player" image, if available
-                        Just sfc -> return sfc
-                        -- draw raw feature and paint player image on top
-                        Nothing -> drawFeature item >> return (playerImg imgs)
-            w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth img  :: Cairo.Render Double
-            h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight img :: Cairo.Render Double
-            Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
-            Cairo.setSourceSurface img xcd ycd
-            Cairo.paint >> Cairo.restore
-            return $ Cairo.RectangleInt xc yc 48 48
-            
--- | RGBA color components.
-type CairoColor = (Double, Double, Double, Double)
+        
+-- | Renders a single feature onto a surface.
+drawFeature :: ImagePool           -- ^ single raw sprites
+            -> (Int, Int)          -- ^ lower /(x, y)/ scenario bounds
+            -> (Coord, Feature)    -- ^ the level coordinates and the feature to draw on those coordinates
+            -> Cairo.Render Cairo.RectangleInt  -- ^ the surface region that changed
+drawFeature imgs (lx, ly) ((x, y), ft) = do
+    let xc = (x - lx) * 48
+        yc = (y - ly) * 48
+        xcd = fromIntegral xc :: Double
+        ycd = fromIntegral yc :: Double
+    case M.lookup ft (featureMap imgs) of
+         Just sfc -> do w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth sfc  :: Cairo.Render Double
+                        h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight sfc :: Cairo.Render Double
+                        Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
+                        Cairo.setSourceSurface sfc xcd ycd >> Cairo.paint >> Cairo.restore
+         Nothing -> renderEmptyRect xcd ycd 48 48 (1.0, 0.0, 1.0, 1.0)    -- magenta fallback rectangle
+    return $ Cairo.RectangleInt xc yc 48 48
 
+-- | Renders a single feature including the player onto a surface.
+drawFeatureWithPlayer :: ImagePool           -- ^ single raw sprites
+                      -> (Int, Int)          -- ^ lower /(x, y)/ scenario bounds
+                      -> (Coord, Feature)    -- ^ the level coordinates and the feature to draw on those coordinates
+                      -> Cairo.Render Cairo.RectangleInt  -- ^ the surface region that changed
+drawFeatureWithPlayer imgs l@(lx, ly) item@((x, y), ft) = do
+    let xc = (x - lx) * 48
+        yc = (y - ly) * 48
+        xcd = fromIntegral xc
+        ycd = fromIntegral yc
+    img <- case M.lookup ft (playerMap imgs) of
+                -- draw combined "Feature+Player" image, if available
+                Just sfc -> return sfc
+                -- draw raw feature and paint player image on top
+                Nothing -> drawFeature imgs l item >> return (playerImg imgs)
+    w <- liftM fromIntegral $ Cairo.imageSurfaceGetWidth img  :: Cairo.Render Double
+    h <- liftM fromIntegral $ Cairo.imageSurfaceGetHeight img :: Cairo.Render Double
+    Cairo.save >> Cairo.rectangle xcd ycd (min 48 w) (min 48 h) >> Cairo.clip
+    Cairo.setSourceSurface img xcd ycd
+    Cairo.paint >> Cairo.restore
+    return $ Cairo.RectangleInt xc yc 48 48
+
+-- | Renders a plain rectangle /(x, y, width, height)/ in the given color.
 renderEmptyRect :: Double -> Double -> Double -> Double -> CairoColor -> Cairo.Render ()
 renderEmptyRect x y w h (r, g, b, a) = do
     Cairo.rectangle x y w h
     Cairo.setSourceRGBA r g b a
     Cairo.fill
 
-createEmptySurface :: Int -> Int -> CairoColor -> IO Cairo.Surface
+-- | Creates a new unicolored drawing surface.
+createEmptySurface :: Int           -- ^ width
+                   -> Int           -- ^ height
+                   -> CairoColor    -- ^ base color
+                   -> IO Cairo.Surface
 createEmptySurface w h clr = do
     sfc <- Cairo.createImageSurface Cairo.FormatARGB32 w h
     Cairo.renderWith sfc (renderEmptyRect 0 0 (fromIntegral w) (fromIntegral h) clr)
     return sfc
 
+-- | Creates a new surface that contains the PNG image loaded from the given path.
+--   Creates an empty dummy image if the PNG file fails to be read.
 tryLoadPNG :: FilePath -> IO Cairo.Surface
 tryLoadPNG path = do
     sfc <- Cairo.imageSurfaceCreateFromPNG path
@@ -249,10 +250,13 @@ tryLoadPNG path = do
         else putStrLn ("invalid PNG file: " ++ path)
           >> createEmptySurface 48 48 (0.0, 1.0, 1.0, 1.0)
 
+-- | Draws the given scenario onto the given surface object using the given raw images.
 drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
 drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 
-
+-- | Loads the PNG images to represent level features and player.
+-- ===See also
+-- > 'tryLoadPNG'
 loadImagePool :: FilePath -> IO ImagePool
 loadImagePool parent = do
     (!ftMap, !pMap) <- foldM readFeatureImage (M.empty, M.empty) [minBound..maxBound]
