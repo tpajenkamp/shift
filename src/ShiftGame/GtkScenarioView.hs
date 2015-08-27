@@ -240,15 +240,15 @@ createEmptySurface w h clr = do
     return sfc
 
 -- | Creates a new surface that contains the PNG image loaded from the given path.
---   Creates an empty dummy image if the PNG file fails to be read.
-tryLoadPNG :: FilePath -> IO Cairo.Surface
+--   Returns the loaded image in a 'Right' container on success and
+--   an empty dummy image in a 'Left' container otherwise.
+tryLoadPNG :: FilePath -> IO (Either Cairo.Surface Cairo.Surface)
 tryLoadPNG path = do
     sfc <- Cairo.imageSurfaceCreateFromPNG path
     status <- Cairo.surfaceStatus sfc
     if (status == Cairo.StatusSuccess)
-        then return sfc
-        else putStrLn ("invalid PNG file: " ++ path)
-          >> createEmptySurface 48 48 (0.0, 1.0, 1.0, 1.0)
+        then (return . Right) sfc
+        else createEmptySurface 48 48 (0.0, 1.0, 1.0, 1.0) >>= return . Left
 
 -- | Draws the given scenario onto the given surface object using the given raw images.
 drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
@@ -257,7 +257,8 @@ drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 -- | Loads the PNG images to represent level features and player.
 -- ===See also
 -- > 'tryLoadPNG'
-loadImagePool :: FilePath -> IO ImagePool
+loadImagePool :: FilePath -- ^ root directory of all images
+              -> IO ImagePool
 loadImagePool parent = do
     (!ftMap, !pMap) <- foldM readFeatureImage (M.empty, M.empty) [minBound..maxBound]
     pImg <- getPlayerImage
@@ -272,11 +273,13 @@ loadImagePool parent = do
                 pathWithPlayer =  (parent ++ pathSeparator:(show ft) ++ "_Player.png")
             exist <- doesFileExist pathFeature
             mFeature' <- if exist
-                        then tryLoadPNG pathFeature >>= return . (flip . M.insert) ft mFeature
+                        then tryLoadPNG pathFeature >>= either (\i -> putStrLn ("invalid PNG file: " ++ pathFeature) >> return i) (return)
+                                 >>= return . (flip . M.insert) ft mFeature
                         else putStrLn ("missing resource file: " ++ pathFeature) >> return mFeature
             existP <- doesFileExist pathWithPlayer
             mPlayer' <- if existP
-                         then tryLoadPNG pathWithPlayer >>= return . (flip . M.insert) ft mPlayer
+                         then tryLoadPNG pathWithPlayer >>= either (\i -> putStrLn ("invalid PNG file: " ++ pathWithPlayer) >> return i) (return)
+                                 >>= return . (flip . M.insert) ft mPlayer
                          else return mPlayer
             return (mFeature', mPlayer')
         getPlayerImage :: IO Cairo.Surface
@@ -284,7 +287,7 @@ loadImagePool parent = do
             let playerPath = parent ++ pathSeparator:"Player.png"
             exist <- doesFileExist playerPath
             if exist
-              then tryLoadPNG playerPath
+              then tryLoadPNG playerPath >>= either (\i -> putStrLn ("invalid PNG file: " ++ playerPath) >> return i) (return)
               else do putStrLn ("missing resource file: " ++ playerPath)
                       sfc <- Cairo.createImageSurface Cairo.FormatARGB32 48 48
                       Cairo.renderWith sfc (renderEmptyRect 0 0 48 48 (1.0, 0.0, 1.0, 1.0) >>
