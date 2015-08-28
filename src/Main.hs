@@ -197,7 +197,7 @@ createInfoBar ctrl = do
 autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => MVar UserInputControl -> MVar (ScenarioSettings sc, ctrl) -> IO (LevelProgressor sc ctrl, ctrl)
 autoAdvanceLevel uRef sRef = do
     (scenSettings, ctrl) <- takeMVar sRef
-    let lst = LevelProgressor uRef sRef
+    let lst = createLevelProgressor uRef sRef
     ctrl' <- controllerAddListener ctrl lst
     putMVar sRef (scenSettings, ctrl')
     return (lst, ctrl')
@@ -222,6 +222,13 @@ initSettings s = let
                           }
   in (uic, sc)
 
+
+-- | Destroys all given windows and clears the @MVar@.
+quitAllWindows :: MVar [Window] -> IO ()
+quitAllWindows wRef = do
+    windows <- takeMVar wRef
+    mapM_ widgetDestroy windows
+    putMVar wRef []
 
 
 -- implementation detail: GTK event handling does not (easily) allow mixing the Event monad with e. g. State or Reader

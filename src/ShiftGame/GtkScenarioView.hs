@@ -71,6 +71,7 @@ $(makeLensPrefixLenses ''UserInputControl)
 TextView based view
 -}
 
+-- | 'UpdateListener' to display the current level on a text field in ASCII characters.
 data TextViewUpdateListener = TextViewUpdateListener TextBuffer
 
 instance UpdateListener TextViewUpdateListener IO MatrixScenario where
@@ -89,24 +90,27 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
   notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
   notifyWin l@(TextViewUpdateListener tBuffer) = return l
 
+-- | Creates a @TextViewUpdateListener@ for the given @TextBuffer@
 createTextViewLink :: TextBuffer -> TextViewUpdateListener
-createTextViewLink tBuffer = TextViewUpdateListener tBuffer
+createTextViewLink = TextViewUpdateListener
 
 
 {-
 Graphics View
 -}
 
+-- | Container for raw images of single features and the player.
 data ImagePool = ImagePool { featureMap :: M.Map Feature Cairo.Surface -- ^ map containing images for raw features
                            , playerMap  :: M.Map Feature Cairo.Surface -- ^ map containing images for player onto feature, if special
                            , playerImg  :: Cairo.Surface               -- ^ player image to draw onto feature if not contained in playerMap
                            }
 $(makeLensPrefixLenses ''ImagePool)
 
-data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool            -- ^ Available images to draw onto canvas
-                                                 , drawCanvas     :: DrawingArea          -- ^ Connected @DrawingArea@ serving as canvas
-                                                 , surfaceRef     :: MVar Cairo.Surface  -- ^ Reference to Cairo image of currently drawed scenario
-                                                 , lowScenarioBnd :: (Int, Int)           -- ^ Lower (x, y) bounds of current scenario
+-- | 'UpdateListener' for a 'DrawingArea', draws and updates the @DrawingArea@ with the current level on each player action.
+data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool            -- ^ available images to draw onto canvas
+                                                 , drawCanvas     :: DrawingArea          -- ^ connected @DrawingArea@ serving as canvas
+                                                 , surfaceRef     :: MVar Cairo.Surface   -- ^ reference to Cairo image of currently drawed scenario
+                                                 , lowScenarioBnd :: (Int, Int)           -- ^ lower (x, y) bounds of current scenario
                                                  }
 $(makeLensPrefixLenses ''CanvasUpdateListener)
 
@@ -133,7 +137,7 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
         else return sfc
       lift $ putMVar sfcRef nextSfc    
       lift $ postGUIAsync (do
-          -- find parent window, this way is not universal but shoul suffice in this scenario
+          -- find parent window, this way is not universal but should suffice in this use case
           -- further details can be found in the GTK documentation for gtk_widget_get_toplevel
           mbParentWindow <- widgetGetAncestor widget gTypeWindow
           -- resize widget and possibly parent window
@@ -260,7 +264,9 @@ drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 loadImagePool :: FilePath -- ^ root directory of all images
               -> IO ImagePool
 loadImagePool parent = do
+    -- find image for each existing feature
     (!ftMap, !pMap) <- foldM readFeatureImage (M.empty, M.empty) [minBound..maxBound]
+    -- load raw player image
     pImg <- getPlayerImage
     return $ ImagePool ftMap pMap pImg
   where -- | Tries to find Feature image (<parent_path>/<feature>.png) and
@@ -271,17 +277,20 @@ loadImagePool parent = do
         readFeatureImage (mFeature, mPlayer) ft = do
             let pathFeature = (parent ++ pathSeparator:(show ft) ++ ".png")
                 pathWithPlayer =  (parent ++ pathSeparator:(show ft) ++ "_Player.png")
+            -- search for feature image
             exist <- doesFileExist pathFeature
             mFeature' <- if exist
                         then tryLoadPNG pathFeature >>= either (\i -> putStrLn ("invalid PNG file: " ++ pathFeature) >> return i) (return)
                                  >>= return . (flip . M.insert) ft mFeature
                         else putStrLn ("missing resource file: " ++ pathFeature) >> return mFeature
+            -- search for image that combines feature and player
             existP <- doesFileExist pathWithPlayer
             mPlayer' <- if existP
                          then tryLoadPNG pathWithPlayer >>= either (\i -> putStrLn ("invalid PNG file: " ++ pathWithPlayer) >> return i) (return)
                                  >>= return . (flip . M.insert) ft mPlayer
-                         else return mPlayer
+                         else return mPlayer   -- no special player-feature image exists for this feature
             return (mFeature', mPlayer')
+        -- | Tries to load the player image (<parent_path>/Player.png) and uses a fallback image on failure.
         getPlayerImage :: IO Cairo.Surface
         getPlayerImage = do
             let playerPath = parent ++ pathSeparator:"Player.png"
@@ -289,6 +298,7 @@ loadImagePool parent = do
             if exist
               then tryLoadPNG playerPath >>= either (\i -> putStrLn ("invalid PNG file: " ++ playerPath) >> return i) (return)
               else do putStrLn ("missing resource file: " ++ playerPath)
+                      -- dummy fallback image
                       sfc <- Cairo.createImageSurface Cairo.FormatARGB32 48 48
                       Cairo.renderWith sfc (renderEmptyRect 0 0 48 48 (1.0, 0.0, 1.0, 1.0) >>
                                             Cairo.setSourceRGBA 0.0 1.0 0.0 1.0 >>
@@ -302,13 +312,16 @@ loadImagePool parent = do
                       return sfc
 
 
+-- | Draws the @Surface@ stored in the @MVar@ within the @Render@.
+--   This function can be used for buffering where the stored surface is the buffer.
 copyScenarioToSurface :: MVar Cairo.Surface -> Cairo.Render ()
 copyScenarioToSurface mapSurfaceRef = do
     mapSurface <- liftIO $ readMVar mapSurfaceRef
     Cairo.setSourceSurface mapSurface 0 0
     Cairo.paint
 
-
+-- | Creates a @CanvasUpdateListener@ for the given @DrawingArea@ drawing the given level as initial scenario
+--   using raw feature images provided by the @ImagePool@.
 createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO CanvasUpdateListener
 createCanvasViewLink imgs drawin scs = do
     let sc = scenario scs
@@ -318,6 +331,7 @@ createCanvasViewLink imgs drawin scs = do
     scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
     scenRef <- newMVar scenSurface
     widgetSetSizeRequest drawin xSpan ySpan
+    -- draw scenario buffer image on drawing routine
     _ <- drawin `on` draw $ copyScenarioToSurface scenRef
     return $ CanvasUpdateListener imgs drawin scenRef (lx, ly)
 
@@ -326,6 +340,7 @@ createCanvasViewLink imgs drawin scs = do
 Keyboard Listener
 -}
 
+-- | 'UpdateListener' to update a statusbar with the amount of player moves.
 data StatusBarListener sc = StatusBarListener Statusbar ContextId
 
 instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
@@ -347,6 +362,7 @@ instance Scenario sc => UpdateListener (StatusBarListener sc) IO sc where
       lift $ postGUIAsync (statusbarPush bar cId ("Victory! " ++ show steps ++ " / " ++ show steps') >> return ())
       return l
 
+-- | Creates a @StatusBarListener@ for the given statusbar.
 createStatusBarLink :: Scenario sc => Statusbar -> IO (StatusBarListener sc)
 createStatusBarLink bar = do
     contextId <- statusbarGetContextId bar "Steps"
@@ -360,15 +376,15 @@ Automatically switch to next level on win event
 
 -- | @UpdateListener@ to automatically advance to the next level when a scenario is won (after some time).
 --   
---   @MVar (ScenarioSettings sc, ctrl)@ is always acquired before @MVar UserInputControl@
+--   @MVar (ScenarioSettings sc, ctrl)@ is always acquired before @MVar UserInputControl@.
 data LevelProgressor sc ctrl = LevelProgressor (MVar UserInputControl) (MVar (ScenarioSettings sc, ctrl))
-
 
 instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelProgressor sc ctrl) IO sc where
   notifyUpdate l _ = return l
   notifyNew l = return l
   notifyWin l@(LevelProgressor uRef sRef) = lift $ do
      -- create new thread because sRef and uRef are blocked by keyboard listener
+     -- additionally, changing ctrl while being called by it would not be wise, either
      _ <- forkIO (do
         var@(scenSettings, ctrl) <- takeMVar sRef
         uic <- takeMVar uRef
@@ -414,6 +430,9 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
        )
      return l
 
+-- | Creates a @LevelProgressor@ using the given settings and game controller.
+createLevelProgressor :: (Scenario sc, ScenarioController ctrl sc IO) => MVar UserInputControl -> MVar (ScenarioSettings sc, ctrl) -> LevelProgressor sc ctrl
+createLevelProgressor = LevelProgressor
 
 {-
 Level id updater
@@ -435,6 +454,7 @@ instance (Monad m, Scenario sc) => UpdateListener (LevelNewListener sc ctrl m) m
 Other stuff
 -}
 
+-- | Advances the game to the next scenario. Returns @IO 'Nothing'@ if there is no next scenario to choose.
 setNextScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings MatrixScenario, ctrl)))
 setNextScenarioLevel uic (scenSettings, ctrl) =
     case increaseScenarioId scenSettings of
@@ -444,6 +464,7 @@ setNextScenarioLevel uic (scenSettings, ctrl) =
              return $ Just (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings', ctrl'))
          Nothing -> return Nothing
 
+-- | Proceed the game with the previous scenario. Returns @IO 'Nothing'@ if there is no previous scenario to choose.
 setPrevScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings MatrixScenario, ctrl)))
 setPrevScenarioLevel uic (scenSettings, ctrl) =
     case decreaseScenarioId scenSettings of
@@ -453,19 +474,12 @@ setPrevScenarioLevel uic (scenSettings, ctrl) =
              return $ Just (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings', ctrl'))
          Nothing -> return Nothing
 
+-- | Resets the current scenario of the game to its initial state.
 resetCurrentScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (UserInputControl, (ScenarioSettings MatrixScenario, ctrl))
 resetCurrentScenarioLevel uic (scenSettings, ctrl) = do
     let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
     (_, ctrl') <- runStateT (setScenario currentScen) ctrl
     -- there may be a delayed level change -> enable player movement
     return (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings, ctrl'))
-
--- | Destroys all given windows and clears the @MVar@.
-quitAllWindows :: MVar [Window] -> IO ()
-quitAllWindows wRef = do
-    windows <- takeMVar wRef
-    mapM_ widgetDestroy windows
-    putMVar wRef []
-
 
 

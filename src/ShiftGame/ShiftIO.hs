@@ -14,12 +14,13 @@ import ShiftGame.Helpers
 import ShiftGame.Scenario
 import ShiftGame.ScenarioParser
 
-
+-- | Shows the parsed scenario on stdout.
 displayScenarioData :: ScenarioState MatrixScenario -> IO ()
 displayScenarioData sc = do
    putStrLn $ "player: " ++ (show . playerCoord) sc ++ " empty targets: " ++ (show . emptyTargets) sc
    (B.putStrLn . flip showScenarioWithPlayer (playerCoord sc) . scenario) sc
 
+-- | Parses levels from the given @ByteString@.
 runParser :: ByteString -> IO [ScenarioState MatrixScenario]
 runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenarioCollection) initParseState) levelRaw
                         unless (isRight possiblyParsed) $
@@ -33,6 +34,7 @@ runParser levelRaw = do let possiblyParsed = parseOnly (runStateT (parseScenario
                         return myScenarioStates -- todo: parse error
 
 
+-- | Parses levels from the given file path. Returns @IO 'Nothing'@ on failure.
 readScenario :: FilePath -> IO (Maybe [ScenarioState MatrixScenario])
 readScenario levelPath = do
    mbFileData <- catch ((liftM Just) (B.readFile levelPath))
