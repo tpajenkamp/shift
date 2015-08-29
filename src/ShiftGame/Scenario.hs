@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveDataTypeable, ExistentialQuantification, TemplateHaskell, RecordWildCards, MultiParamTypeClasses, FlexibleInstances #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.Scenario
@@ -21,6 +21,7 @@ import           Data.Array as A
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B hiding(ByteString)
 import           Data.Maybe
+import           Data.Typeable
 
 import LensNaming
 
@@ -105,6 +106,7 @@ moveCoordinate MRight (x, y) = (x+1, y)
 moveCoordinate MUp    (x, y) = (x, y-1)
 moveCoordinate MDown  (x, y) = (x, y+1)
 
+
 -- | A @Scenario@ is a possibly bounded world of 'Feature's.
 --   Each feature coordinate may be changed.
 --   
@@ -113,9 +115,17 @@ moveCoordinate MDown  (x, y) = (x, y+1)
 --  Definition of 'isInside' is recommended.
 class Scenario sc where
   createEmptyScenario :: sc
+  -- | Returns the bounds of a @Scenario@.
+  --   The returned values are the lowest @(x, y)@ and the highest @(x, y)@ indices.
+  --   There is no guarantee that all coordinates between the bounds are valid.
+  getScenarioBounds :: sc -> (Coord, Coord)
+  getScenarioBounds s = let (allX, allY) = (unzip . listCoordinates) s
+    in ((minimum allX, minimum allY), (maximum allX, maximum allY))
   -- | Test if a coordinate is within the world.
   isInside :: sc -> Coord -> Bool
   isInside sc = not . isNothing . getFeature sc
+  -- | Lists all coordinates that is part of the scenario. Lists no coordinate twice.
+  listCoordinates :: sc -> [Coord]
   -- | Get the @Feature@ at the specified coordinates.
   --   Returns 'Nothing' if the coordinates are inccassible.
   getFeature :: sc -> Coord -> Maybe Feature
@@ -128,13 +138,29 @@ class Scenario sc where
   modifyFeature sc c f = do ft <- getFeature sc c
                             setFeature sc c (f ft)
 
--- | 'Scenario' instance with an underlying dense matrix.
-newtype MatrixScenario = MatrixScenario { matrix :: Array Coord Feature } deriving(Eq, Show)
+-- | Generic wrapper for any 'Scenario'.
+-- === See also
+--   > 'castScenario'
+data GenericScenario = forall s. (Typeable s, Scenario s) => GenericScenario { boxedScenario :: s } deriving (Typeable)
+$(makeLensPrefixLenses ''GenericScenario)
 
+instance Scenario (GenericScenario) where
+  createEmptyScenario = GenericScenario (createEmptyScenario :: MatrixScenario)
+  isInside (GenericScenario s) = isInside s
+  listCoordinates (GenericScenario s) = listCoordinates s
+  getFeature (GenericScenario s) = getFeature s
+  setFeature (GenericScenario s) c ft = maybe Nothing (Just . GenericScenario) (setFeature s c ft)
+  modifyFeature (GenericScenario s) c f = maybe Nothing (Just . GenericScenario) (modifyFeature s c f)
+
+-- | 'Scenario' instance with an underlying dense matrix.
+newtype MatrixScenario = MatrixScenario { scenarioMatrix :: Array Coord Feature } deriving(Eq, Show, Typeable)
+$(makeLensPrefixLenses ''GenericScenario)
 
 instance Scenario MatrixScenario where
   createEmptyScenario = MatrixScenario (A.listArray ((0,0), (0,0)) [Floor])
   isInside (MatrixScenario mat) c = inRange (bounds mat) c
+  getScenarioBounds = bounds . scenarioMatrix
+  listCoordinates (MatrixScenario mat) = A.indices mat
   getFeature sc@(MatrixScenario mat) c = if isInside sc c
                                            then return $ mat!c
                                            else Nothing
@@ -142,15 +168,9 @@ instance Scenario MatrixScenario where
                                            then return $ MatrixScenario $ mat//[(c, ft)]
                                            else Nothing
 
--- | Returns the internal matrix of a @MatrixScenario@.
-getMatrixScenarioArray :: MatrixScenario -> Array Coord Feature
-getMatrixScenarioArray (MatrixScenario a) = a
-
--- | Returns the bounds of a @MatrixScenario@.
---   The returned values are the lower @(x, y)@ and the upper @(x, y)@ bounds.
---   All values between the bounds, including the bounds themselves, are valid coordinates for the scenario.
-getMatrixScenarioBounds :: MatrixScenario -> (Coord, Coord)
-getMatrixScenarioBounds = bounds . getMatrixScenarioArray
+-- | Lists all valid coordinates of a @Scenario@ and the corresponding @Feature@s
+getScenarioFeatures :: Scenario sc => sc -> [(Coord, Feature)]
+getScenarioFeatures s = [(c, maybe Wall id (getFeature s c)) | c <- listCoordinates s]
 
 -- | Single character representation of a @Feature@.
 showFeature :: Feature -> Char
@@ -204,6 +224,34 @@ data ScenarioState sc = ScenarioState
                         } deriving (Eq, Show, Read)
 $(makeLensPrefixLenses ''ScenarioState)
 
+-- | Helper class to change the type of a 'Scenario' within a 'ScenarioState'.
+--   
+--   Especially useful in conjunction with @ScenarioState 'GenericScenario'@.
+class ConvertableScenarioState sc sc' where
+  -- | Change the 'Scenario' type within the @ScenarioState@.
+  convertScenarioState :: ScenarioState sc -> Maybe (ScenarioState sc')
+  convertScenarioState (ScenarioState{..}) = case convertScenario scenario of 
+      Just s -> Just $ (ScenarioState playerCoord s emptyTargets spentSteps pastMoveStack futureMoveQueue)
+      Nothing -> Nothing
+  -- | Convert the @Scenario@ type.
+  convertScenario :: sc -> Maybe sc'
+  convertScenario _ = Nothing    -- default implementation fails conversion
+
+-- nothing to wrap if both types are equal
+instance ConvertableScenarioState sc sc where
+  convertScenarioState s = Just s
+  convertScenario sc = Just sc
+
+instance (Typeable sc, Scenario sc) => ConvertableScenarioState GenericScenario sc where
+  convertScenario (GenericScenario sc) = cast sc
+
+instance (Typeable sc, Scenario sc) => ConvertableScenarioState sc GenericScenario where
+  convertScenario = Just . GenericScenario
+
+-- make sure that most specialized type does not produce overhead
+instance ConvertableScenarioState GenericScenario GenericScenario where
+  convertScenarioState s = Just s
+  convertScenario sc = Just sc
 
 -- | Creates an empty @ScenarioState@.
 emptyScenarioState :: Scenario sc => ScenarioState sc

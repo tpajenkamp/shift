@@ -107,24 +107,24 @@ data ImagePool = ImagePool { featureMap :: M.Map Feature Cairo.Surface -- ^ map 
 $(makeLensPrefixLenses ''ImagePool)
 
 -- | 'UpdateListener' for a 'DrawingArea', draws and updates the @DrawingArea@ with the current level on each player action.
-data CanvasUpdateListener = CanvasUpdateListener { bufferedImages :: ImagePool            -- ^ available images to draw onto canvas
-                                                 , drawCanvas     :: DrawingArea          -- ^ connected @DrawingArea@ serving as canvas
-                                                 , surfaceRef     :: MVar Cairo.Surface   -- ^ reference to Cairo image of currently drawed scenario
-                                                 , lowScenarioBnd :: (Int, Int)           -- ^ lower (x, y) bounds of current scenario
-                                                 }
+data CanvasUpdateListener sc = CanvasUpdateListener { bufferedImages :: ImagePool            -- ^ available images to draw onto canvas
+                                                    , drawCanvas     :: DrawingArea          -- ^ connected @DrawingArea@ serving as canvas
+                                                    , surfaceRef     :: MVar Cairo.Surface   -- ^ reference to Cairo image of currently drawed scenario
+                                                    , lowScenarioBnd :: (Int, Int)           -- ^ lower (x, y) bounds of current scenario
+                                                    }
 $(makeLensPrefixLenses ''CanvasUpdateListener)
 
-instance UpdateListener CanvasUpdateListener IO MatrixScenario where
-  notifyUpdate :: CanvasUpdateListener -> ScenarioUpdate -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
+instance (Scenario sc) => UpdateListener (CanvasUpdateListener sc) IO sc where
+  notifyUpdate :: (CanvasUpdateListener sc) -> ScenarioUpdate -> ReaderT (ScenarioState sc) IO (CanvasUpdateListener sc)
   notifyUpdate l@(CanvasUpdateListener imgs widget sfcRef lowBnd) u = do
       sfc <- lift $ readMVar sfcRef
       invalRegion <- lift $ Cairo.renderWith sfc (scenarioUpdateRender imgs u lowBnd)
       lift $ postGUIAsync (widgetQueueDrawRegion widget invalRegion)
       return l
-  notifyNew :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
+  notifyNew :: (CanvasUpdateListener sc) -> ReaderT (ScenarioState sc) IO (CanvasUpdateListener sc)
   notifyNew l@(CanvasUpdateListener imgs widget sfcRef _) = do
       scs <- ask
-      let ((lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+      let ((lx,ly), (hx, hy)) = getScenarioBounds (scenario scs)
           xSpan = (hx-lx + 1) * 48
           ySpan = (hy-ly + 1) * 48
       sfc <- lift $ takeMVar sfcRef
@@ -149,7 +149,7 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
           drawScenario imgs nextSfc scs
           widgetQueueDraw widget)
       return $ set lensLowScenarioBnd (lx,ly) l
-  notifyWin :: CanvasUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO CanvasUpdateListener
+  notifyWin :: (CanvasUpdateListener sc) -> ReaderT (ScenarioState sc) IO (CanvasUpdateListener sc)
   notifyWin l = return l
 
 
@@ -157,7 +157,7 @@ instance UpdateListener CanvasUpdateListener IO MatrixScenario where
 type CairoColor = (Double, Double, Double, Double)
 
 -- | Renders the whole content of a @ScenarioState@ onto a surface.
-scenarioRender :: ImagePool -> ScenarioState MatrixScenario -> Cairo.Render ()
+scenarioRender :: Scenario sc => ImagePool -> ScenarioState sc -> Cairo.Render ()
 scenarioRender imgs scs = do
     -- paint background
     (cx1, cy1, cx2, cy2) <- Cairo.clipExtents
@@ -165,7 +165,7 @@ scenarioRender imgs scs = do
     Cairo.setSourceRGB 0.0 0.0 0.0
     Cairo.fill
     -- paint scenario map
-    let (l@(lx,ly), (hx, hy)) = getMatrixScenarioBounds (scenario scs)
+    let (l@(lx,ly), (hx, hy)) = getScenarioBounds (scenario scs)
     sequence_ $ map (drawFeature imgs l) $
         [((x, y), fromMaybe Wall $ getFeature (scenario scs) (x, y)) | x <- [lx..hx], y <- [ly..hy]]
     -- paint player
@@ -255,7 +255,7 @@ tryLoadPNG path = do
         else createEmptySurface 48 48 (0.0, 1.0, 1.0, 1.0) >>= return . Left
 
 -- | Draws the given scenario onto the given surface object using the given raw images.
-drawScenario :: ImagePool -> Cairo.Surface -> ScenarioState MatrixScenario -> IO ()
+drawScenario :: Scenario sc => ImagePool -> Cairo.Surface -> ScenarioState sc -> IO ()
 drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 
 -- | Loads the PNG images to represent level features and player.
@@ -322,10 +322,10 @@ copyScenarioToSurface mapSurfaceRef = do
 
 -- | Creates a @CanvasUpdateListener@ for the given @DrawingArea@ drawing the given level as initial scenario
 --   using raw feature images provided by the @ImagePool@.
-createCanvasViewLink :: ImagePool -> DrawingArea -> ScenarioState MatrixScenario -> IO CanvasUpdateListener
+createCanvasViewLink :: Scenario sc => ImagePool -> DrawingArea -> ScenarioState sc -> IO (CanvasUpdateListener sc)
 createCanvasViewLink imgs drawin scs = do
     let sc = scenario scs
-        ((lx,ly), (hx, hy)) = getMatrixScenarioBounds sc
+        ((lx,ly), (hx, hy)) = getScenarioBounds sc
         xSpan = (hx-lx + 1) * 48
         ySpan = (hy-ly + 1) * 48
     scenSurface <- Cairo.createImageSurface Cairo.FormatARGB32 xSpan ySpan
@@ -455,7 +455,7 @@ Other stuff
 -}
 
 -- | Advances the game to the next scenario. Returns @IO 'Nothing'@ if there is no next scenario to choose.
-setNextScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings MatrixScenario, ctrl)))
+setNextScenarioLevel :: (ScenarioController ctrl sc IO) => UserInputControl -> (ScenarioSettings sc, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings sc, ctrl)))
 setNextScenarioLevel uic (scenSettings, ctrl) =
     case increaseScenarioId scenSettings of
          Just (scenSettings', nextScen, _) -> do
@@ -465,7 +465,7 @@ setNextScenarioLevel uic (scenSettings, ctrl) =
          Nothing -> return Nothing
 
 -- | Proceed the game with the previous scenario. Returns @IO 'Nothing'@ if there is no previous scenario to choose.
-setPrevScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings MatrixScenario, ctrl)))
+setPrevScenarioLevel :: (ScenarioController ctrl sc IO) => UserInputControl -> (ScenarioSettings sc, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings sc, ctrl)))
 setPrevScenarioLevel uic (scenSettings, ctrl) =
     case decreaseScenarioId scenSettings of
          Just (scenSettings', nextScen, _) -> do
@@ -475,7 +475,7 @@ setPrevScenarioLevel uic (scenSettings, ctrl) =
          Nothing -> return Nothing
 
 -- | Resets the current scenario of the game to its initial state.
-resetCurrentScenarioLevel :: (ScenarioController ctrl MatrixScenario IO) => UserInputControl -> (ScenarioSettings MatrixScenario, ctrl) -> IO (UserInputControl, (ScenarioSettings MatrixScenario, ctrl))
+resetCurrentScenarioLevel :: (ScenarioController ctrl sc IO) => UserInputControl -> (ScenarioSettings sc, ctrl) -> IO (UserInputControl, (ScenarioSettings sc, ctrl))
 resetCurrentScenarioLevel uic (scenSettings, ctrl) = do
     let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
     (_, ctrl') <- runStateT (setScenario currentScen) ctrl

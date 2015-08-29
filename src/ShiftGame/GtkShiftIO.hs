@@ -40,15 +40,15 @@ showSelectScenarioDialog = do
 
 
 -- | Asks the user to select a file and sets it to be the new scenario pool on success. Do not call this function from within a thread that owns the Gtk lock!!!
-selectScenarioFile :: (ScenarioController ctrl MatrixScenario IO) => MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> IO Bool
+selectScenarioFile :: (ParsableScenario sc, ScenarioController ctrl sc IO) => MVar (UserInputControl) -> MVar (ScenarioSettings sc, ctrl) -> IO Bool
 selectScenarioFile uRef sRef = do
    mbPath <- postGUISync showSelectScenarioDialog
    case mbPath of
         Just fp -> do
            (scenSettings, ctrl) <- takeMVar sRef
            uic <- takeMVar uRef
-           mbNewScenarios <- readScenario fp :: IO (Maybe [ScenarioState MatrixScenario])
-           let newScenarios = maybe [] id mbNewScenarios :: [ScenarioState MatrixScenario]
+           mbNewScenarios <- readScenario fp
+           let newScenarios = maybe [] id mbNewScenarios
            if (null newScenarios)
              then putMVar uRef uic >> putMVar sRef (scenSettings, ctrl) >> return False
              else do let newScenSettings = setScenarioPool scenSettings newScenarios

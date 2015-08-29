@@ -235,7 +235,7 @@ quitAllWindows wRef = do
 -- that is the reason why an 'MVar' is used.
 -- | Processes keyboard events and determines the resulting player action.
 --   Takes @MVar (ScenarioSettings sc, ctrl)@ before @MVar UserInputControl@ before @MVar [Window]@.
-keyboardHandler :: (ScenarioController ctrl MatrixScenario IO) => MVar (UserInputControl) -> MVar (ScenarioSettings MatrixScenario, ctrl) -> MVar [Window] -> EventM EKey Bool
+keyboardHandler :: (ParsableScenario sc, ScenarioController ctrl sc IO) => MVar (UserInputControl) -> MVar (ScenarioSettings sc, ctrl) -> MVar [Window] -> EventM EKey Bool
 keyboardHandler uRef sRef wRef = do 
     keySettings <- (lift . readMVar) uRef
     keyV <- eventKeyVal
