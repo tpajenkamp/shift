@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, FlexibleContexts, InstanceSigs, AllowAmbiguousTypes #-}
+{-# LANGUAGE ScopedTypeVariables, FlexibleContexts, InstanceSigs #-}
 module ShiftGame.ShiftIO where
 
 import           Control.Exception
