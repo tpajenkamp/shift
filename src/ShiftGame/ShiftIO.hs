@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, InstanceSigs #-}
+{-# LANGUAGE CPP, ScopedTypeVariables, InstanceSigs #-}
 module ShiftGame.ShiftIO where
 
 import           Control.Exception
@@ -8,7 +8,9 @@ import           Data.Attoparsec.ByteString.Char8 (parseOnly)
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import           Data.Maybe
-
+#if MIN_VERSION_base(4,7,0)
+import           Data.Either
+#endif
 
 import ShiftGame.Helpers
 import ShiftGame.Scenario
