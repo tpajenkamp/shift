@@ -16,7 +16,7 @@
 module ShiftGame.ScenarioController where
 
 import Control.Lens
-import Control.Monad
+--import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State.Lazy
