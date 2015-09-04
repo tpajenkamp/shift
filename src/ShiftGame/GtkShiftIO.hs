@@ -12,7 +12,7 @@ import           System.FilePath
 import           System.Glib.UTFString
 
 import ShiftGame.GtkScenarioView
-import ShiftGame.Scenario
+--import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 import ShiftGame.ShiftIO
 
@@ -40,23 +40,24 @@ showSelectScenarioDialog = do
 
 
 -- | Asks the user to select a file and sets it to be the new scenario pool on success. Do not call this function from within a thread that owns the Gtk lock!!!
-selectScenarioFile :: (ParsableScenario sc, ScenarioController ctrl sc IO) => MVar (UserInputControl) -> MVar (ScenarioSettings sc, ctrl) -> IO Bool
-selectScenarioFile uRef sRef = do
+selectScenarioFile :: (ParsableScenario sc, ScenarioController ctrl sc IO) => MVar (GameSettings sc, ctrl) -> IO Bool
+selectScenarioFile gRef = do
    mbPath <- postGUISync showSelectScenarioDialog
    case mbPath of
         Just fp -> do
-           (scenSettings, ctrl) <- takeMVar sRef
-           uic <- takeMVar uRef
+           var@(g@(GameSettings scenSettings _ _), ctrl) <- takeMVar gRef
            mbNewScenarios <- readScenario fp
            let newScenarios = maybe [] id mbNewScenarios
            if (null newScenarios)
-             then putMVar uRef uic >> putMVar sRef (scenSettings, ctrl) >> return False
+             then putMVar gRef var >> return False
              else do let newScenSettings = setScenarioPool scenSettings newScenarios
                      let newScen = head newScenarios
                      (_, ctrl') <- runStateT (setScenario newScen) ctrl
                      -- there may be a delayed level change -> disable and enable player movement
-                     putMVar uRef (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled))
-                     putMVar sRef (newScenSettings, ctrl')
+                     putMVar gRef (g & (lensUserInputControl . lensMovementMode .~ MovementEnabled)
+                                     . (lensScenarioSettings .~ newScenSettings)
+                                     . (lensStalledScenarioChange .~ NoChangeStalled)
+                                             , ctrl')
                      return True
         Nothing -> return False
 

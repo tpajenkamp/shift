@@ -36,7 +36,6 @@ import ShiftGame.Helpers
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 
--- MVar order: get (Scenario sc, ScenarioController ctrl m sc) => (MVar (ScenarioSettings sc, ctrl)) before (MVar UserInputControl) within a thread
 
 data MovementMode = MovementEnabled | MovementDisabled deriving (Bounded, Eq, Show, Read, Enum)
 
@@ -46,11 +45,6 @@ data ScenarioChangeMode = NoChangeStalled | ChangeStalled { stallingThreadId :: 
 $(makeLensPrefixLenses ''ScenarioChangeMode)
 $(makePrisms ''ScenarioChangeMode)
 
-
-data InputMode = InputMode { movementMode :: MovementMode
-                           , scenarioChangeMode :: ScenarioChangeMode
-                           } deriving (Eq, Show)
-$(makeLensPrefixLenses ''InputMode)
 
 data UserInputControl = UserInputControl { keysLeft   :: [KeyVal] -- ^ keys (alternatives) to trigger a "left" movement
                                          , keysRight  :: [KeyVal] -- ^ keys (alternatives) to trigger a "right" movement
@@ -63,9 +57,16 @@ data UserInputControl = UserInputControl { keysLeft   :: [KeyVal] -- ^ keys (alt
                                          , keysNext   :: [KeyVal] -- ^ keys (alternatives) to advance to next level
                                          , keysPrev   :: [KeyVal] -- ^ keys (alternatives) to revert to previous level
                                          , keysLoad   :: [KeyVal] -- ^ keys (alternatives) to show "open level file" dialog
-                                         , inputMode :: InputMode -- ^ what user interactions are currently possible
+                                         , movementMode  :: MovementMode -- ^ what user interactions are currently possible
                                          } deriving (Eq, Show)
 $(makeLensPrefixLenses ''UserInputControl)
+
+data GameSettings sc = GameSettings { scenarioSettings :: ScenarioSettings sc
+                                    , userInputControl :: UserInputControl
+                                    , stalledScenarioChange :: ScenarioChangeMode
+                                    } deriving (Eq, Show)
+$(makeLensPrefixLenses ''GameSettings)
+
 
 {-
 TextView based view
@@ -88,7 +89,7 @@ instance UpdateListener TextViewUpdateListener IO MatrixScenario where
       lift $ postGUIAsync (textBufferSetByteString tBuffer levelStrWithPlayer)
       return l
   notifyWin :: TextViewUpdateListener -> ReaderT (ScenarioState MatrixScenario) IO TextViewUpdateListener
-  notifyWin l@(TextViewUpdateListener tBuffer) = return l
+  notifyWin l = return l
 
 -- | Creates a @TextViewUpdateListener@ for the given @TextBuffer@
 createTextViewLink :: TextBuffer -> TextViewUpdateListener
@@ -375,63 +376,57 @@ Automatically switch to next level on win event
 
 
 -- | @UpdateListener@ to automatically advance to the next level when a scenario is won (after some time).
---   
---   @MVar (ScenarioSettings sc, ctrl)@ is always acquired before @MVar UserInputControl@.
-data LevelProgressor sc ctrl = LevelProgressor (MVar UserInputControl) (MVar (ScenarioSettings sc, ctrl))
+data LevelProgressor sc ctrl = LevelProgressor (MVar (GameSettings sc, ctrl))
 
 instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelProgressor sc ctrl) IO sc where
   notifyUpdate l _ = return l
   notifyNew l = return l
-  notifyWin l@(LevelProgressor uRef sRef) = lift $ do
+  notifyWin l@(LevelProgressor gRef) = lift $ do
      -- create new thread because sRef and uRef are blocked by keyboard listener
      -- additionally, changing ctrl while being called by it would not be wise, either
      _ <- forkIO (do
-        var@(scenSettings, ctrl) <- takeMVar sRef
-        uic <- takeMVar uRef
+        var@(GameSettings scenSettings uic _, ctrl) <- takeMVar gRef
         -- test if current scenario is not last scenario AND scenario is still in winning state (may have changed after fork)
         if ((not . isLastScenarioFromPoolCurrent) scenSettings && (isWinningState . getControllerScenarioState) ctrl) 
           then do  -- initiate level progression
             putStrLn "shortly progressing to next level"
             me <- myThreadId
-            -- disable player movement and register stalled change
-            putMVar uRef (uic & lensInputMode %~ (lensScenarioChangeMode .~ ChangeStalled me (currentScenario scenSettings + 1))
-                                               . (lensMovementMode .~ MovementDisabled))
-            putMVar sRef var
+            -- disable player movement and register stalled change, let controller unchanged
+            putMVar gRef (var & _1 %~ (lensStalledScenarioChange .~ ChangeStalled me (currentScenario scenSettings + 1))
+                                    . (lensUserInputControl . lensMovementMode .~ MovementDisabled))
+
             -- wait some time with level change
             threadDelay 2000000    -- microseconds
-            var@(scenSettings, ctrl) <- takeMVar sRef
-            uic <- takeMVar uRef
+            var@(gSett@(GameSettings scenSettings uic stalled), ctrl) <- takeMVar gRef
             -- test if thread id is still registered, otherwise: do nothing
             -- (level may have been changed manually, reset, undone, ...)
-            if maybe (False) (== me) (uic ^? lensInputMode . lensScenarioChangeMode . lensStallingThreadId)
+            if maybe (False) (== me) (stalled ^? lensStallingThreadId)
               then do
                  -- set next level
                                                                   -- is guaranteed to be Just ... because of earlier check
-                 let mbNextScen = setCurrentScenario scenSettings (fromJust $ uic ^? lensInputMode . lensScenarioChangeMode . lensStalledScenarioId)
-                 maybe (do putMVar uRef (uic & lensInputMode . lensScenarioChangeMode .~ NoChangeStalled)
-                           putMVar sRef var)                         -- no "next" scenario, do nothing
+                 let mbNextScen = setCurrentScenario scenSettings (fromJust $ stalled ^? lensStalledScenarioId)
+                 maybe (do putMVar gRef (var & _1 . lensStalledScenarioChange .~ NoChangeStalled))  -- no "next" scenario, do "nothing"
                        (\(scenSettings', newScen) -> do
                            (_, ctrl') <- runStateT (setScenario newScen) ctrl
-                           putMVar uRef (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled)
-                                                              . (lensScenarioChangeMode .~ NoChangeStalled))
-                           putMVar sRef (scenSettings', ctrl'))      -- change scenario
+                           putMVar gRef (gSett & (lensUserInputControl . lensMovementMode .~ MovementEnabled)  -- enable user movement
+                                               . (lensScenarioSettings .~ scenSettings')                       -- update ScenarioSettings
+                                               . (lensStalledScenarioChange .~ NoChangeStalled)                -- remove possibly stalled change
+                                               , ctrl'))                                                       -- update controller
                        mbNextScen
-              else do
-                 putMVar uRef uic
-                 putMVar sRef var
+              else do  -- some other thread grabbed "lock" to change scenario
+                 putMVar gRef var
           else do  -- is last scenario OR state is not winning any longer (for whatever reasons)
-             if (isWinningState . getControllerScenarioState) ctrl
-               -- last scenario reached, disable movement
-               then putMVar uRef (uic & lensInputMode . lensMovementMode .~ MovementDisabled)
-                 >> putStrLn "Dark Victory!!!!"
-               -- whatever, do nothing
-               else putMVar uRef uic
-             putMVar sRef var
+             uic' <- if (isWinningState . getControllerScenarioState) ctrl
+                       -- last scenario reached, disable movement
+                       then putStrLn "Dark Victory!!!!" >> return (uic & lensMovementMode .~ MovementDisabled)
+                       -- whatever, do nothing
+                       else return uic
+             putMVar gRef (var & _1 . lensUserInputControl .~ uic')
        )
      return l
 
 -- | Creates a @LevelProgressor@ using the given settings and game controller.
-createLevelProgressor :: (Scenario sc, ScenarioController ctrl sc IO) => MVar UserInputControl -> MVar (ScenarioSettings sc, ctrl) -> LevelProgressor sc ctrl
+createLevelProgressor :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (GameSettings sc, ctrl) -> LevelProgressor sc ctrl
 createLevelProgressor = LevelProgressor
 
 {-
@@ -455,31 +450,39 @@ Other stuff
 -}
 
 -- | Advances the game to the next scenario. Returns @IO 'Nothing'@ if there is no next scenario to choose.
-setNextScenarioLevel :: (ScenarioController ctrl sc IO) => UserInputControl -> (ScenarioSettings sc, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings sc, ctrl)))
-setNextScenarioLevel uic (scenSettings, ctrl) =
+setNextScenarioLevel :: (ScenarioController ctrl sc IO) => (GameSettings sc, ctrl) -> IO (Maybe (GameSettings sc, ctrl))
+setNextScenarioLevel (g@(GameSettings scenSettings _ _), ctrl) =
     case increaseScenarioId scenSettings of
          Just (scenSettings', nextScen, _) -> do
              (_, ctrl') <- runStateT (setScenario nextScen) ctrl
              -- there may be a delayed level change -> enable player movement
-             return $ Just (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings', ctrl'))
+             return $ Just (g & (lensUserInputControl . lensMovementMode .~ MovementEnabled)
+                              . (lensScenarioSettings .~ scenSettings')
+                              . (lensStalledScenarioChange .~ NoChangeStalled)
+                              , ctrl')
          Nothing -> return Nothing
 
 -- | Proceed the game with the previous scenario. Returns @IO 'Nothing'@ if there is no previous scenario to choose.
-setPrevScenarioLevel :: (ScenarioController ctrl sc IO) => UserInputControl -> (ScenarioSettings sc, ctrl) -> IO (Maybe (UserInputControl, (ScenarioSettings sc, ctrl)))
-setPrevScenarioLevel uic (scenSettings, ctrl) =
+setPrevScenarioLevel :: (ScenarioController ctrl sc IO) => (GameSettings sc, ctrl) -> IO (Maybe (GameSettings sc, ctrl))
+setPrevScenarioLevel (g@(GameSettings scenSettings _ _), ctrl) =
     case decreaseScenarioId scenSettings of
          Just (scenSettings', nextScen, _) -> do
              (_, ctrl') <- runStateT (setScenario nextScen) ctrl
              -- there may be a delayed level change -> enable player movement
-             return $ Just (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings', ctrl'))
+             return $ Just (g & (lensUserInputControl . lensMovementMode .~ MovementEnabled)
+                              . (lensScenarioSettings .~ scenSettings')
+                              . (lensStalledScenarioChange .~ NoChangeStalled)
+                              , ctrl')
          Nothing -> return Nothing
 
 -- | Resets the current scenario of the game to its initial state.
-resetCurrentScenarioLevel :: (ScenarioController ctrl sc IO) => UserInputControl -> (ScenarioSettings sc, ctrl) -> IO (UserInputControl, (ScenarioSettings sc, ctrl))
-resetCurrentScenarioLevel uic (scenSettings, ctrl) = do
+resetCurrentScenarioLevel :: (ScenarioController ctrl sc IO) => (GameSettings sc, ctrl) -> IO (GameSettings sc, ctrl)
+resetCurrentScenarioLevel (g@(GameSettings scenSettings _ _), ctrl) = do
     let currentScen = getScenarioFromPool scenSettings (currentScenario scenSettings)
     (_, ctrl') <- runStateT (setScenario currentScen) ctrl
     -- there may be a delayed level change -> enable player movement
-    return (uic & lensInputMode %~ (lensMovementMode .~ MovementEnabled) . (lensScenarioChangeMode .~ NoChangeStalled), (scenSettings, ctrl'))
+    return (g & (lensUserInputControl . lensMovementMode .~ MovementEnabled)
+              . (lensStalledScenarioChange .~ NoChangeStalled)
+              , ctrl')
 
 
