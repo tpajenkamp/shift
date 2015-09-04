@@ -36,14 +36,13 @@ import ShiftGame.Scenario
 
 
 {-
-
-Wall 	# 	0x23
-Player 	@ 	0x40
-Player on goal square 	+ 	0x2b
-Box 	$ 	0x24
-Box on goal square 	* 	0x2a
-Goal square 	. 	0x2e
-Floor 	(Space) 	0x20
+Wall    #     0x23
+Player  @     0x40
+PlayerX +     0x2b
+Object  $     0x24
+TargetX *     0x2a
+Target  .     0x2e
+Floor (Space) 0x20
 
 -}
 
@@ -127,8 +126,8 @@ parseEntry col ch = do
 parseLine :: StateT ParseState Parser Bool
 parseLine = do line <- lift $ APC.takeWhile1 (\c -> c /= '\n' && c /= '\r') -- break on line ends
                let lineLength = B.length line
-               newLine <- V.generateM lineLength (tokenParser line) -- new row vector has fitting line length
-               when ((not . V.null) newLine) $ -- add row only if it is not empty
+               newLine <- V.generateM lineLength (tokenParser line)   -- new row vector has fitting line length
+               when ((not . V.null) newLine) $                        -- add row only if it is not empty
                    modify (\s -> s { linesReverse = newLine : linesReverse s
                                    , linesCount = 1 + linesCount s })
                lift $ endOfLine <|> endOfInput
@@ -150,6 +149,7 @@ createScenarioArrayList maxCol row (line:ls) = let lineMax = V.length line - 1
                         map (\c -> ((c, row), Wall)) [maxIx + 1 .. maxCol]
 createScenarioArrayList _ _ [] = []
 
+-- | Consumes a comment line. A comment line is a nonempty line that does not start with a valid level character.
 parseTestCommentLine :: StateT ParseState Parser Bool
 parseTestCommentLine = do
    _ <- lift $ satisfy (not . validChar)
@@ -162,7 +162,7 @@ parseTestEmptyLine = do
    lift $ endOfLine
    return False
 
--- | Parses string line by line and end at end of input.
+-- | Parses string line by line and end at comment or end of input.
 parseData :: StateT ParseState Parser ()
 parseData = do continue <- (parseTestEmptyLine <|> parseTestCommentLine <|> parseLine)
                if continue
