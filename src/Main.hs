@@ -113,10 +113,16 @@ createShiftGameWindow ctrl keyHandler gRef widget = do
    widgetShowAll window
    return (window, ctrl)
 
+loadDefaultIconList :: IO [Pixbuf]
+loadDefaultIconList = do
+    let sizes = [16, 32, 48]
+    sequence $ fmap (\s -> pixbufNewFromFileAtSize ("data/icon/app_icon_" ++ show s ++ 'x': show s ++ ".png") s s) sizes
 
 main :: IO ()
 main = do
    _ <- initGUI
+
+   loadDefaultIconList >>= windowSetDefaultIconList
 
    -- read level
    args <- getArgs
