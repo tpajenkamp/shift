@@ -22,10 +22,11 @@ import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
+import           Data.List
 import           Data.Maybe
 import           Graphics.UI.Gtk hiding(get, set)
 import qualified Graphics.UI.Gtk as Gtk
-import           System.Directory (doesFileExist)
+import           System.Directory (doesFileExist, doesDirectoryExist, getDirectoryContents)
 import           System.Environment
 import           System.FilePath (pathSeparator)
 import           System.Glib.UTFString
@@ -115,8 +116,11 @@ createShiftGameWindow ctrl keyHandler gRef widget = do
 
 loadDefaultIconList :: IO [Pixbuf]
 loadDefaultIconList = do
-    let sizes = [16, 32, 48]
-    sequence $ fmap (\s -> pixbufNewFromFileAtSize ("data/icon/app_icon_" ++ show s ++ 'x': show s ++ ".png") s s) sizes
+    let formats = fmap (('.':) . glibToString) pixbufGetFormats  -- supported image file extensions, prepended with '.'
+        iconDir = "data/icon/"
+    doesDirectoryExist iconDir
+    content <- fmap (filter (\s -> isPrefixOf "app_icon_" s && any (`isSuffixOf` s) formats)) (getDirectoryContents iconDir) -- filter appropriate files
+    sequence $ fmap (\fp -> pixbufNewFromFile (iconDir ++ pathSeparator:fp)) content
 
 main :: IO ()
 main = do
