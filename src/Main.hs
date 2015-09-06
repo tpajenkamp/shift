@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, ScopedTypeVariables #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.Main
@@ -29,7 +29,9 @@ import qualified Graphics.UI.Gtk as Gtk
 import           System.Directory (doesFileExist, doesDirectoryExist, getDirectoryContents)
 import           System.Environment
 import           System.FilePath (pathSeparator)
+import           System.Glib.GError
 import           System.Glib.UTFString
+import           System.IO
 
 import ShiftGame.Helpers
 import ShiftGame.GtkScenarioView
@@ -116,17 +118,19 @@ createShiftGameWindow ctrl keyHandler gRef widget = do
 
 loadDefaultIconList :: IO [Pixbuf]
 loadDefaultIconList = do
-    let formats = fmap (('.':) . glibToString) pixbufGetFormats  -- supported image file extensions, prepended with '.'
-        iconDir = "data/icon/"
+    let formats = fmap (('.':) . glibToString) pixbufGetFormats    -- supported image file extensions, prepended with '.'
+        formats' = if ".jpeg" `elem` formats then ".jpg":formats else formats    -- jpg file ending is more common than jpeg
+        iconDir = "data" ++ pathSeparator:"icon"
     doesDirectoryExist iconDir
-    content <- fmap (filter (\s -> isPrefixOf "app_icon_" s && any (`isSuffixOf` s) formats)) (getDirectoryContents iconDir) -- filter appropriate files
+    content <- fmap (filter (\s -> isPrefixOf "app_icon_" s && any (`isSuffixOf` s) formats')) (getDirectoryContents iconDir)   -- filter appropriate files
     sequence $ fmap (\fp -> pixbufNewFromFile (iconDir ++ pathSeparator:fp)) content
 
 main :: IO ()
 main = do
    _ <- initGUI
 
-   loadDefaultIconList >>= windowSetDefaultIconList
+   iconList <- catchGErrorJustDomain loadDefaultIconList (\(err::PixbufError) msg -> hPutStrLn stderr (glibToString msg) >> return [])
+   windowSetDefaultIconList iconList
 
    -- read level
    args <- getArgs
