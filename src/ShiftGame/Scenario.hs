@@ -70,6 +70,9 @@ targetable TargetX = False
 targetable _       = False
 
 -- | What you get if you mix two @Feature@s.
+--   
+--   @Floor@ as second argument is used for "erasing", e. g. when 'undo'ing a shift operation
+--   (@Floor@ cannot be shifted, normally).
 combineFeatures :: Feature        -- ^ previous @Feature@
                 -> Feature        -- ^ new @Feature@
                 -> (Feature, Int) -- ^ the combined @Feature@ and the change of unoccupied targets
@@ -272,7 +275,7 @@ data ScenarioUpdate = ScenarioUpdate
                       , newPlayerCoord  :: Coord              -- ^ the player coordinates after the update
                       , newEmptyTargets :: Int                -- ^ the total amount of unoccupied targets after the update
                       , updatedSteps    :: (Int, Int)         -- ^ effective and total number of steps (total number counts undos and redos)
-                      , performedPlayerAction    :: Maybe CharacterReaction -- ^ the action type or @Nothing@ if it should not change the stored movement queue
+                      , performedPlayerAction    :: CharacterReaction -- ^ the last performed action
                       } deriving (Eq, Show, Read)
 $(makeLensPrefixLenses ''ScenarioUpdate)
 
@@ -298,7 +301,7 @@ askPlayerMove scs dir =
                                              , newPlayerCoord = tp
                                              , newEmptyTargets = emptyTargets scs
                                              , updatedSteps = (steps + 1, steps' + 1)
-                                             , performedPlayerAction = (Just . RMove) dir }
+                                             , performedPlayerAction = RMove dir }
                    else -- The target Feature cannot be walked on, but it may be shifted away
                         case (shiftable ft, (not . isNothing) fs && targetable (fromJust fs)) of
                              (True, True)  ->        -- perform a shift and move the player
@@ -308,7 +311,7 @@ askPlayerMove scs dir =
                                                              , newPlayerCoord = tp
                                                              , newEmptyTargets = emptyTargets scs + targetChange1 + targetChange2
                                                              , updatedSteps = (steps + 1, steps' + 1)
-                                                             , performedPlayerAction = (Just . RShift) dir}
+                                                             , performedPlayerAction = RShift dir}
                              (True, False) -> Left ShiftBlocked     -- Shift target space is blocked
                              _ -> Left PathBlocked                  -- Feature cannot be shifted
          else Left OutsideWorld
@@ -321,44 +324,37 @@ askPlayerMove scs dir =
 -- > redo
 undo :: Scenario sc => ScenarioState sc    -- ^ current scenario state
                     -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ on success: @ScenarioUpdate@ that leads to updated @ScenarioState@
-undo scs = do 
-    a <- case pastMoveStack scs of                       -- action to undo
-              [] -> Left NoAction
-              a:_ -> return a
+undo scs = do
+    (a, as) <- case pastMoveStack scs of                 -- action to undo
+                    [] -> Left NoAction
+                    a:as -> return (a, as)
     let dir = direction a                                -- last performed move direction
         backstep = revertMovement dir                    -- direction to move to previous direction
-        playercoord = playerCoord scs                    -- current player coordinates
-        backcoord = moveCoordinate backstep playercoord  -- previous player position
+        oldpCoord = playerCoord scs                      -- current (=old) player coordinates
+        newpCoord = moveCoordinate backstep oldpCoord    -- previous (=new) player position
         sc = scenario scs
         (steps, steps') = spentSteps scs                 -- current (effective steps, total steps)
-    plFeature <- case getFeature sc playercoord of       -- feature at player position
+    oldpFeature <- case getFeature sc oldpCoord of         -- feature at old player position
                       Just ft -> return ft
                       Nothing -> Left OutsideWorld
-    plFeature' <- case getFeature sc backcoord of        -- feature at previous player position
+    newpFeature <- case getFeature sc newpCoord of        -- feature at new player position
                        Just ft -> return ft
                        Nothing -> Left OutsideWorld
-    unless (walkable plFeature') $                       -- sanity check
-        Left PathBlocked
     update <- case a of
-                   (RMove _) -> return $ ScenarioUpdate [(playercoord, plFeature), (backcoord, plFeature')]
-                                             backcoord (emptyTargets scs) (steps-1, steps'+1) Nothing
-                   (RShift _) -> do
-                       let backshiftFrom = moveCoordinate dir playercoord
-                       backshiftFeature <- case getFeature sc backshiftFrom of
-                                                Just ft -> return ft
-                                                Nothing -> Left OutsideWorld
-                       unless (targetable plFeature) $   -- sanity check
-                           Left ShiftBlocked
-                       unless (shiftable backshiftFeature) $    -- sanity check
-                           Left InvalidMove
-                       let (newFeatureP, chg)   = combineFeatures plFeature backshiftFeature
-                           (newFeatureP', chg') = combineFeatures backshiftFeature Floor
-                       return $ ScenarioUpdate [(playercoord, newFeatureP), (backcoord, plFeature'), (backshiftFrom, newFeatureP')]
-                                    backcoord (view lensEmptyTargets scs + chg + chg') (steps-1, steps'+1) Nothing
-    scs' <- updateScenario (scs & lensSpentSteps .~ (steps-1, steps' + 1)
-                                & lensPastMoveStack %~ tail
-                                & lensFutureMoveQueue %~  (a:)) update
+                   RMove _ -> return $ ScenarioUpdate [(newpCoord, newpFeature), (oldpCoord, oldpFeature)]
+                                                      newpCoord (emptyTargets scs) (steps-1, steps'+1) (a)
+                   RShift _ -> do
+                     let shiftfromCoord = moveCoordinate dir oldpCoord    -- coordinate where the shifted object came from
+                     shiftfromFeature <- case getFeature sc shiftfromCoord of
+                                              Just ft -> return ft
+                                              Nothing -> Left InvalidMove
+                     let (oldpFeature', chg) = combineFeatures oldpFeature shiftfromFeature      -- new feature at old player position
+                         (shiftfromFeature', chg') = combineFeatures shiftfromFeature Floor      -- new feature where object has been shifte to
+                     return $ ScenarioUpdate [(newpCoord, newpFeature), (oldpCoord, oldpFeature'), (shiftfromCoord, shiftfromFeature')]
+                                             newpCoord (view lensEmptyTargets scs + chg + chg') (steps-1, steps'+1) (a)
+    scs' <- fmap ((lensPastMoveStack .~ as) . (lensFutureMoveQueue .~ a : view lensFutureMoveQueue scs)) (updateScenario scs update)
     Right (update, scs')
+
 
 -- | Redo the last undone movement, returns the changed state or @Left NoAction@ if no undone action is recorded.
 --
@@ -370,15 +366,12 @@ redo  :: Scenario sc => ScenarioState sc    -- ^ current scenario state
                      -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ on success: @ScenarioUpdate@ that leads to updated @ScenarioState@
 redo scs = case futureMoveQueue scs of
                 [] -> Left NoAction
-                a:_ -> let dir = direction a
-                       in case askPlayerMove scs dir of
-                               Left r -> Left r
-                               Right update -> do
-                                   let update' = update & lensPerformedPlayerAction .~ Nothing
-                                   scs' <- updateScenario (scs & lensPastMoveStack %~ (a:)
-                                                               & lensFutureMoveQueue %~ tail
-                                                               ) update'
-                                   Right (update', scs')
+                a:as -> let dir = direction a
+                        in case askPlayerMove scs dir of
+                                Left r -> Left r
+                                Right update -> do
+                                    scs' <- fmap (lensFutureMoveQueue .~ as) (updateScenario scs update)
+                                    Right (update, scs')
 
 
 
@@ -400,13 +393,7 @@ updateScenario scs u = do let sc = scenario scs
                                       & lensScenario .~ nextScenario
                                       & lensEmptyTargets .~ newEmptyTargets u
                                       & lensSpentSteps .~ updatedSteps u
-                                      -- on regular move: add player action to pastMoveStack, clear futureMoveQueue
-                                      -- performedPlayerAction is 'Nothing' (used by undo and redo): do not change stacks
-                                      & lensPastMoveStack %~ (\st -> case performedPlayerAction u of
-                                                                          Nothing -> st
-                                                                          Just a  -> a : st)
-                                      & lensFutureMoveQueue %~ (\q -> case performedPlayerAction u of
-                                                                           Nothing -> q
-                                                                           Just _  -> [])
+                                      & lensPastMoveStack %~ (performedPlayerAction u :)  -- append last action
+                                      & lensFutureMoveQueue .~ []                         -- flush queue
 
 
