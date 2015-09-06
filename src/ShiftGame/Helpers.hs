@@ -21,26 +21,32 @@ module ShiftGame.Helpers (
     ) where
 
 -- Either functions
+
+-- | The 'fromLeft' function extracts the element out of a 'Left' and throws an
+--   error if its argument is 'Right'.
 fromLeft :: Either a b -> a
 fromLeft (Left a) = a
 fromLeft _ = error "Helpers.fromLeft: no Left"
 
+-- | The 'fromLeft' function extracts the element out of a 'Left' and throws an
+--   error if its argument is 'Right'.
 fromRight :: Either a b -> b
 fromRight (Right b) = b
 fromRight _ = error "Helpers.fromLeft: no Left"
 
 
 -- Tuple functions
+
+-- | The 'mapTuple' function applies a function on both elements of a tuple.
 mapTuple :: (a -> b) -> (a, a) -> (b, b)
 mapTuple f (x, y) = (f x, f y)
 
+-- | The 'mapTuple3' function applies a function on all three elements of a tuple.
 mapTuple3 :: (a -> b) -> (a, a, a) -> (b, b, b)
 mapTuple3 f (x, y, z) = (f x, f y, f z)
 
 #if !MIN_VERSION_base(4,7,0)
 -- | Return `True` if the given value is a `Left`-value, `False` otherwise.
---
--- @since 4.7.0.0
 --
 -- ==== __Examples__
 --
@@ -71,8 +77,6 @@ isLeft (Left  _) = True
 isLeft (Right _) = False
 
 -- | Return `True` if the given value is a `Right`-value, `False` otherwise.
---
--- @since 4.7.0.0
 --
 -- ==== __Examples__
 --

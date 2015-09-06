@@ -71,7 +71,7 @@ targetable _       = False
 
 -- | What you get if you mix two @Feature@s.
 --   
---   @Floor@ as second argument is used for "erasing", e. g. when 'undo'ing a shift operation
+--   'Floor' as second argument is used for "erasing", e. g. when 'undo'ing a shift operation
 --   (@Floor@ cannot be shifted, normally).
 combineFeatures :: Feature        -- ^ previous @Feature@
                 -> Feature        -- ^ new @Feature@
@@ -85,7 +85,7 @@ combineFeatures TargetX _       = (Target,   1)
 combineFeatures _       TargetX = (Object,   0)
 combineFeatures _       new     = (new,      0)
 
--- | Scenario coordinates @(x, y)@.
+-- | Scenario coordinates /(x, y)/.
 type Coord = (Int, Int)
 
 -- | Extract direction from a move or shift.
@@ -112,19 +112,20 @@ moveCoordinate MDown  (x, y) = (x, y+1)
 
 -- | A @Scenario@ is a possibly bounded world of 'Feature's.
 --   Each feature coordinate may be changed.
---   
---  === Minimal complete definition
---  > getFeature', 'setFeature'
---  Definition of 'isInside' is recommended.
 class Scenario sc where
   createEmptyScenario :: sc
   -- | Returns the bounds of a @Scenario@.
-  --   The returned values are the lowest @(x, y)@ and the highest @(x, y)@ indices.
+  --   The returned values are the lowest /(x, y)/ and the highest /(x, y)/ indices.
   --   There is no guarantee that all coordinates between the bounds are valid.
+  --   
+  --   The default implementation searches through all values of 'listCoordinates'
+  --   and should be defined by instances.
   getScenarioBounds :: sc -> (Coord, Coord)
   getScenarioBounds s = let (allX, allY) = (unzip . listCoordinates) s
     in ((minimum allX, minimum allY), (maximum allX, maximum allY))
   -- | Test if a coordinate is within the world.
+  --
+  --   Default implementation: Tests if 'getFeature' returns a value.
   isInside :: sc -> Coord -> Bool
   isInside sc = not . isNothing . getFeature sc
   -- | Lists all coordinates that is part of the scenario. Lists no coordinate twice.
@@ -142,8 +143,9 @@ class Scenario sc where
                             setFeature sc c (f ft)
 
 -- | Generic wrapper for any 'Scenario'.
--- === See also
---   > 'castScenario'
+-- 
+-- ==== See also
+-- @'convertScenario'@
 data GenericScenario = forall s. (Typeable s, Scenario s) => GenericScenario { boxedScenario :: s } deriving (Typeable)
 $(makeLensPrefixLenses ''GenericScenario)
 
@@ -189,7 +191,7 @@ combinePlayerAndFeature Target =  '+'    -- Target
 combinePlayerAndFeature Wall   =  '@'    -- Floor
 combinePlayerAndFeature _      =  '@'    -- others are invalid, fall back
 
--- | Converts a @MatrtixScenario@ into a easily readable string.
+-- | Converts a @MatrtixScenario@ into an easily readable string.
 showScenario :: MatrixScenario -> ByteString
 showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (xl, yl)
   --                                                                 #rows + 1 for line breaks
@@ -201,7 +203,7 @@ showScenario (MatrixScenario mat) = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) 
           | x == xh + 1 = Just ('\n', (xl, y+1))     -- end of row: linebreak and continue at next row
           | otherwise   = Just (showFeature (mat!c), (x+1, y))    -- next character in row
 
--- | Converts a @MatrtixScenario@ into a easily readable string and displays the player on the given coordinate.
+-- | Converts a @MatrtixScenario@ into an easily readable string and displays the player on the given coordinate.
 showScenarioWithPlayer :: MatrixScenario -> Coord -> ByteString
 showScenarioWithPlayer (MatrixScenario mat) pC = fst $ B.unfoldrN ((lineLength) * (yh-yl+2)) seedFunc (xl, yl)
   --                                                                 #rows + 1 for line breaks
@@ -236,9 +238,8 @@ class ConvertableScenarioState sc sc' where
   convertScenarioState (ScenarioState{..}) = case convertScenario scenario of 
       Just s -> Just $ (ScenarioState playerCoord s emptyTargets spentSteps pastMoveStack futureMoveQueue)
       Nothing -> Nothing
-  -- | Convert the @Scenario@ type.
+  -- | Converts the 'Scenario' type.
   convertScenario :: sc -> Maybe sc'
-  convertScenario _ = Nothing    -- default implementation fails conversion
 
 -- nothing to wrap if both types are equal
 instance ConvertableScenarioState sc sc where
@@ -266,9 +267,10 @@ isWinningState scs = emptyTargets scs == 0
 
 
 -- | A storage for everything that changed within a 'ScenarioState'.
---   This includes the previous and current player position and their underlying @Feature@s.
--- === See also
--- > 'askPlayerMove', 'updateScenario'
+--   This includes the previous and current player position and their underlying 'Feature's.
+--
+-- ==== See also
+-- @'askPlayerMove', 'updateScenario'@
 data ScenarioUpdate = ScenarioUpdate
                       { changedFeatures :: [(Coord, Feature)] -- ^ a list of all changed @Features@, each coordinate is present only once
                                                               --   and the corresponding @Feature@ is the @Feature@ after the update
@@ -280,10 +282,11 @@ data ScenarioUpdate = ScenarioUpdate
 $(makeLensPrefixLenses ''ScenarioUpdate)
 
 -- | Tests whether a player move can be performed and computes the result.
---   Returns a @Left DenyReason@ if the move is not possible and a
+--   Returns a @Left 'DenyReason'@ if the move is not possible and a
 --   @Right 'ScenarioUpdate'@ with the resulting changes otherwise.
--- === See also
--- > 'updateScenario', 'DenyReason'
+--
+-- ==== See also
+-- @'updateScenario'@
 askPlayerMove :: Scenario sc => ScenarioState sc -> PlayerMovement -> Either DenyReason ScenarioUpdate
 askPlayerMove scs dir =
     do let sc = scenario scs
@@ -320,8 +323,9 @@ askPlayerMove scs dir =
 -- | Undo the last movement, returns the changed state or @Left NoAction@ if no previous action is recorded.
 --
 --   If the @DenyReason@ is not 'NoAction' it is an indicator for an inconsistent game state.
--- === See also
--- > redo
+--
+-- ==== See also
+-- @'redo'@
 undo :: Scenario sc => ScenarioState sc    -- ^ current scenario state
                     -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ on success: @ScenarioUpdate@ that leads to updated @ScenarioState@
 undo scs = do
@@ -360,8 +364,8 @@ undo scs = do
 --
 --   If the @DenyReason@ is not 'NoAction' it is an indicator for an inconsistent game state.
 --
--- === See also
--- > undo
+-- ==== See also
+-- @'undo'@
 redo  :: Scenario sc => ScenarioState sc    -- ^ current scenario state
                      -> Either DenyReason (ScenarioUpdate, ScenarioState sc)    -- ^ on success: @ScenarioUpdate@ that leads to updated @ScenarioState@
 redo scs = case futureMoveQueue scs of
@@ -378,8 +382,9 @@ redo scs = case futureMoveQueue scs of
 -- | Performs a @ScenarioUpdate@ on the given @ScenarioState@.
 --   The update is always possible if the @ScenarioUpdate@ has been computed via
 --   'askPlayerMove' on the same @ScenarioState@.
--- === See also
--- > 'askPlayerMove'
+--
+-- ==== See also
+-- @'askPlayerMove'@
 updateScenario :: Scenario sc => ScenarioState sc -> ScenarioUpdate -> Either DenyReason (ScenarioState sc)
 updateScenario scs u = do let sc = scenario scs
                               pcoord = newPlayerCoord u

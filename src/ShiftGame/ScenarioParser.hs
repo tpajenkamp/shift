@@ -8,12 +8,12 @@
 -- Stability   :
 -- Portability :
 --
--- | Parser for level files
+-- | 'MatrixScenario' parser for single-level or batch level texts.
 --
 -----------------------------------------------------------------------------
 
 module ShiftGame.ScenarioParser (
-parseScenario, parseScenarioCollection, ParseState, warnings, ParseWarning(..), initParseState
+parseScenario, parseScenarioCollection, LevelId, ParseState(), warnings, levelCount, ParseWarning(..), initParseState
 ) where
 
 --import           Prelude hiding ((//))
@@ -49,13 +49,15 @@ Floor (Space) 0x20
 validChar :: Char -> Bool
 validChar c = elem c "#@+.$* "
 
+type LevelId = Int
+
 -- | Warnings and errors for parsing a scenario file.
-data ParseWarning = ObjectTargetMismatch Int Int Int   -- ^ number of objects does not fit number of targets: level id, number of objects, number of targets
-                  | InvalidCharacter Int Coord Char    -- ^ unknown symbol in level file: level id, symbol position, symbol
-                  | NoPlayerToken Int                  -- ^ no player position specified in level: level id
-                  | NoTarget Int                       -- ^ no target position specified in level: level id
-                  | MultiplePlayerTokens Int           -- ^ multiple player positions specified in level: level id
-                  | ScenarioEmpty Int                  -- ^ specified scenario is empty: level id
+data ParseWarning = ObjectTargetMismatch LevelId Int Int   -- ^ number of objects that do not fit number of targets: level id, number of objects, number of targets
+                  | InvalidCharacter LevelId Coord Char    -- ^ unknown symbol in level file: level id, symbol position, symbol
+                  | NoPlayerToken LevelId                  -- ^ no player position specified in level: level id
+                  | NoTarget LevelId                       -- ^ no target position specified in level: level id
+                  | MultiplePlayerTokens LevelId           -- ^ multiple player positions specified in level: level id
+                  | ScenarioEmpty LevelId                  -- ^ specified scenario is empty: level id
                   deriving (Eq, Show, Read)
 
 -- | Internal state while parsing
@@ -67,10 +69,10 @@ data ParseState = ParseState
                 , freeTargets  :: Int              -- ^ current number of free target features ('Target' only)
                 , objectCount  :: Int              -- ^ current number of shiftable objects ('Object' and 'TargetX')
                 , warnings     :: [ParseWarning]   -- ^ occurred warnigns so far
-                , currentLevel :: Int
+                , levelCount   :: LevelId          -- ^ level counter, starting with 1
                 } deriving (Eq, Show, Read)
 
--- | Initial empty 'ParseState'
+-- | Initial empty 'ParseState'.
 initParseState :: ParseState
 initParseState = ParseState [] 0 Nothing  0 0 0 [] 1
 
@@ -89,7 +91,7 @@ parseEntry :: Monad m => Int   -- ^ current column
                       -> StateT ParseState m Feature
 parseEntry col ch = do
    s <- get
-   let levelId = currentLevel s
+   let levelId = levelCount s
    case ch of
         '#' -> return Wall
         '@' -> do modify setPlayer
@@ -109,7 +111,7 @@ parseEntry col ch = do
         setPlayer :: ParseState -> ParseState
         setPlayer s = if (isNothing . userCoord) s
                         then s { userCoord = Just (col, linesCount s) }
-                        else s { warnings = MultiplePlayerTokens (currentLevel s) : warnings s }
+                        else s { warnings = MultiplePlayerTokens (levelCount s) : warnings s }
         -- Increment target count within state.
         addTarget :: ParseState -> ParseState
         addTarget s = s { targetCount = 1 + targetCount s, freeTargets = 1 + freeTargets s }
@@ -177,7 +179,7 @@ parseScenario :: StateT ParseState Parser (Maybe (ScenarioState MatrixScenario))
 parseScenario = do
    parseData
    s <- get
-   let levelId = currentLevel s
+   let levelId = levelCount s
    -- skip empty scenarios
    if ((null . linesReverse) s)
       then return Nothing
@@ -202,7 +204,7 @@ parseScenario = do
               colMax = rowLength - 1
               arrayList = createScenarioArrayList colMax rowMax (linesReverse s)
               scArray = array ((0, 0), (colMax, rowMax)) arrayList
-          modify (\s -> s { currentLevel = currentLevel s + 1 })
+          modify (\s -> s { levelCount = levelCount s + 1 })
           resetParseState
           return $ Just $ ScenarioState (fromMaybe (0, 0) (userCoord s)) (MatrixScenario scArray) (freeTargets s) (0, 0) [] []
 

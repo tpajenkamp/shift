@@ -39,7 +39,7 @@ import ShiftGame.ShiftIO
 
 -- | Returns the string that displays the current scenario and the total number of scenarios.
 getScenarioLevelDisplay :: ScenarioSettings sc -> String
-getScenarioLevelDisplay scenSettings = (show . (+1) . currentScenario) scenSettings ++ "/" ++ (show . length . scenarioPool) scenSettings
+getScenarioLevelDisplay scenSettings = (display . incId . currentScenario) scenSettings ++ "/" ++ (show . length . scenarioPool) scenSettings
 
 -- | Creates a widget that helps the user navigate through several scenarios.
 --   

@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, KindSignatures, FlexibleInstances, InstanceSigs, ExistentialQuantification, TemplateHaskell #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, KindSignatures, FlexibleInstances, InstanceSigs, ExistentialQuantification, TemplateHaskell, GeneralizedNewtypeDeriving #-}
 -----------------------------------------------------------------------------
 --
 -- Module      :  ShiftGame.ScenarioParser
@@ -29,11 +29,27 @@ Scenario Pool and its basic operations
 -}
 
 -- | Id of a 'Scenario' within a 'ScenarioSettings' object.
-type ScenarioId = Int
+newtype ScenarioId = ScenarioId {toInt :: Int} deriving (Show, Read, Num, Eq, Ord, Bounded)
+
+-- | Constant for @0@ Id.
+zeroId :: ScenarioId
+zeroId = ScenarioId 0
+
+-- | Increment id by 1.
+incId :: ScenarioId -> ScenarioId
+incId = ScenarioId . (+1) . toInt
+
+-- | Decrement id by 1.
+decId :: ScenarioId -> ScenarioId
+decId = ScenarioId . (flip (-) 1) . toInt
+
+-- | Converts an id to a user-displayable (aka. easily readable) string.
+display :: ScenarioId -> String
+display = show . toInt
 
 -- | Storage for a bunch of @Scenario@s and the id of the currently active scenario.
 data ScenarioSettings sc = ScenarioSettings { scenarioPool    :: [ScenarioState sc] -- ^ loaded scenarios
-                                            , currentScenario :: ScenarioId         -- ^ id of current scenario in @scenarioPool@, starting with @0@
+                                            , currentScenario :: ScenarioId         -- ^ id of current scenario in 'scenarioPool', starting with @0@
                                             } deriving (Eq, Show, Read)
 $(makeLensPrefixLenses ''ScenarioSettings)
 
@@ -46,8 +62,8 @@ setCurrentScenario :: Scenario sc => ScenarioSettings sc    -- ^ Current @Scenar
                                   -> ScenarioId             -- ^ id of the new current scenario
                                   -> Maybe (ScenarioSettings sc, ScenarioState sc)    -- ^ updated input @ScenarioSettings@ and the scenario of the given id
 setCurrentScenario cs sId =
-  if (sId > 0 && sId <= length (scenarioPool cs))
-    then Just (set lensCurrentScenario sId cs, scenarioPool cs !! sId)
+  if (sId > zeroId && toInt sId <= length (scenarioPool cs))
+    then Just (set lensCurrentScenario sId cs, scenarioPool cs !! toInt sId)
     else Nothing
 
 -- | Returns the scenario of the given id. Returns a default empty scenario if the id is outside range.
@@ -56,8 +72,8 @@ setCurrentScenario cs sId =
 getScenarioFromPool :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
                                    -> ScenarioId             -- ^ requested scenario id
                                    -> ScenarioState sc       -- ^ selected scenario
-getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
-                              then scenarioPool cs !! sId
+getScenarioFromPool cs sId = if (sId >= zeroId && toInt sId < length (scenarioPool cs))
+                              then scenarioPool cs !! toInt sId
                               else emptyScenarioState
 
 -- | Returns the scenario of the given id. Returns 'Nothing' if the id is outside range.
@@ -66,25 +82,27 @@ getScenarioFromPool cs sId = if (sId >= 0 && sId < length (scenarioPool cs))
 getScenarioFromPoolMaybe :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
                                         -> ScenarioId             -- ^ requested scenario id
                                         -> Maybe (ScenarioState sc)    --  ^ selected scenario
-getScenarioFromPoolMaybe cs sId = if (sId > 0 && sId < length (scenarioPool cs))
-                                   then Just $ scenarioPool cs !! sId
+getScenarioFromPoolMaybe cs sId = if (sId > zeroId && toInt sId < length (scenarioPool cs))
+                                   then Just $ scenarioPool cs !! toInt sId
                                    else Nothing
 
 -- | Sets the next scenario in the scenario pool to be the current scenario. Returns 'Nothing' if there is no next scenario.
 increaseScenarioId :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
                                   -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)    -- ^ updated @ScenarioSettings@, next scenario and its id
 increaseScenarioId cs = let currentScenarioId = currentScenario cs
+                            newId = incId currentScenarioId
    in if isLastScenarioFromPool cs currentScenarioId
         then Nothing
-        else Just (cs & lensCurrentScenario .~ currentScenarioId + 1, scenarioPool cs !! (currentScenarioId + 1), currentScenarioId + 1) 
+        else Just (cs & lensCurrentScenario .~ newId, scenarioPool cs !! toInt newId, newId) 
 
 -- | Sets the previous scenario in the scenario pool to be the current scenario. Returns 'Nothing' if there is no previous scenario.
 decreaseScenarioId :: Scenario sc => ScenarioSettings sc    -- ^ current @ScenarioSettings@
                                   -> Maybe (ScenarioSettings sc, ScenarioState sc, ScenarioId)    -- ^ updated @ScenarioSettings@, previous scenario and its id
 decreaseScenarioId cs = let currentScenarioId = currentScenario cs
+                            newId = decId currentScenarioId
    in if isFirstScenarioFromPool cs currentScenarioId
         then Nothing
-        else Just (cs & lensCurrentScenario .~ currentScenarioId - 1, scenarioPool cs !! (currentScenarioId - 1), currentScenarioId - 1) 
+        else Just (cs & lensCurrentScenario .~ newId, scenarioPool cs !! toInt newId, newId) 
 
 -- | Returns 'True' if and only if there is no scenario after the specified scenario in the scenario pool.
 isFirstScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
@@ -96,7 +114,7 @@ isFirstScenarioFromPoolCurrent cs = isFirstScenarioFromPool cs (currentScenario 
 
 -- | Returns 'True' if and only if there is no scenario before the specified scenario in the scenario pool.
 isLastScenarioFromPool :: Scenario sc => ScenarioSettings sc -> ScenarioId -> Bool
-isLastScenarioFromPool cs sId = sId >= length (scenarioPool cs) - 1
+isLastScenarioFromPool cs sId = toInt sId >= length (scenarioPool cs) - 1
 
 -- | Returns 'True' if and only if there is no scenario before the current scenario in the scenario pool.
 isLastScenarioFromPoolCurrent :: Scenario sc => ScenarioSettings sc -> Bool
@@ -133,15 +151,15 @@ instance Monad m => UpdateListener (UpdateListenerType m sc) m sc where
 
 -- | Cotroller for propagating and executing player commands and linking them to the game logic.
 --   
---  Class parameters
+--  Class parameters:
 --  
---   * @ctrl@ the controller itself
+--  [@ctrl@] the controller itself
 --
---   * @cs@ internal controller state
+--  [@cs@] internal controller state
 --
---   * @sc@ 'Scenario' instance
+--  [@sc@] 'Scenario' instance
 --
---   * @m@ 'Monad' of related 'UpdateListener'
+--  [@m@] 'Monad' of related 'UpdateListener'
 --
 class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl -> sc m where
     -- | Initial controller state with the given scenario and without any listeners.
@@ -158,9 +176,15 @@ class (Scenario sc, Monad m) => ScenarioController ctrl sc (m :: * -> *) | ctrl 
     -- | Aborts the current game and sets a new scenario.
     setScenario :: ScenarioState sc -> StateT ctrl m ()
     -- | Reverts a single step, returns @Nothing@ on success. Optional.
+    --
+    -- ==== See also
+    -- @'ActionUnsupported'@
     undoAction :: StateT ctrl m (Maybe DenyReason)
     undoAction = return (Just ActionUnsupported)
     -- | Reverts a single step, returns @Nothing@ on success. Optional.
+    --
+    -- ==== See also
+    -- @'ActionUnsupported'@
     redoAction :: StateT ctrl m (Maybe DenyReason)
     redoAction = return (Just ActionUnsupported)
 
@@ -176,11 +200,7 @@ controllerAddListener :: (Scenario sc, Functor m, ScenarioController ctrl sc m, 
                                                                                                        -> m ctrl    -- ^ updated controller
 controllerAddListener ctrl l = (fmap snd) $ runStateT (addListener l) ctrl
 
--- | Creates a new controller with the given scenario.
-initController :: (Functor m, ScenarioController ctrl sc m, UpdateListener u m sc) => ScenarioState sc -> u -> m ctrl
-initController sc lst = fmap snd $ runStateT (addListener lst) (initControllerState sc)
-
--- | The state of a controller handling communication between model and view
+-- | The state of a simple controller handling communication between model and view
 data ControllerState m sc = ControllerState { scenarioState :: ScenarioState sc           -- ^ the game state
                                             , listeners     :: [UpdateListenerType m sc]  -- ^ all known listeners
                                             }

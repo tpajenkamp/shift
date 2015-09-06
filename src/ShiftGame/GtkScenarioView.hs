@@ -111,7 +111,7 @@ $(makeLensPrefixLenses ''ImagePool)
 data CanvasUpdateListener sc = CanvasUpdateListener { bufferedImages :: ImagePool            -- ^ available images to draw onto canvas
                                                     , drawCanvas     :: DrawingArea          -- ^ connected @DrawingArea@ serving as canvas
                                                     , surfaceRef     :: MVar Cairo.Surface   -- ^ reference to Cairo image of currently drawed scenario
-                                                    , lowScenarioBnd :: (Int, Int)           -- ^ lower (x, y) bounds of current scenario
+                                                    , lowScenarioBnd :: (Int, Int)           -- ^ lower /(x, y)/ bounds of current scenario
                                                     }
 $(makeLensPrefixLenses ''CanvasUpdateListener)
 
@@ -260,8 +260,9 @@ drawScenario :: Scenario sc => ImagePool -> Cairo.Surface -> ScenarioState sc ->
 drawScenario imgs target scs = Cairo.renderWith target (scenarioRender imgs scs)
 
 -- | Loads the PNG images to represent level features and player.
--- ===See also
--- > 'tryLoadPNG'
+--
+-- ====See also
+-- @'tryLoadPNG'@
 loadImagePool :: FilePath -- ^ root directory of all images
               -> IO ImagePool
 loadImagePool parent = do
