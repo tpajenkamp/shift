@@ -121,9 +121,11 @@ loadDefaultIconList = do
     let formats = fmap (('.':) . glibToString) pixbufGetFormats    -- supported image file extensions, prepended with '.'
         formats' = if ".jpeg" `elem` formats then ".jpg":formats else formats    -- jpg file ending is more common than jpeg
         iconDir = "data" ++ pathSeparator:"icon"
-    doesDirectoryExist iconDir
-    content <- fmap (filter (\s -> isPrefixOf "app_icon_" s && any (`isSuffixOf` s) formats')) (getDirectoryContents iconDir)   -- filter appropriate files
-    sequence $ fmap (\fp -> pixbufNewFromFile (iconDir ++ pathSeparator:fp)) content
+    dirExist <- doesDirectoryExist iconDir
+    if dirExist
+      then do content <- fmap (filter (\s -> isPrefixOf "app_icon_" s && any (`isSuffixOf` s) formats')) (getDirectoryContents iconDir)   -- filter appropriate files
+              sequence $ fmap (\fp -> pixbufNewFromFile (iconDir ++ pathSeparator:fp)) content
+      else putStrLn ("warning: failed to load icon directory " ++ iconDir) >> return []
 
 main :: IO ()
 main = do
