@@ -12,11 +12,11 @@ only shift them.
 
 Required: *ghc*, *cabal*, *gtk3*
 
-> $ cabal sandbox init
-> $ cabal install gtk2hs-buildtools
-> $ cabal install --only-dependencies
-> $ cabal build
-> $ cabal install
+> $ cabal sandbox init  
+> $ cabal install gtk2hs-buildtools  
+> $ cabal install --only-dependencies  
+> $ cabal build  
+> $ cabal install  
 
 
 ## Running *shift*
