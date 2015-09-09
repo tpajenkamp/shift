@@ -43,6 +43,7 @@ getScenarioLevelDisplay :: ScenarioSettings sc -> String
 getScenarioLevelDisplay scenSettings = (display . incId . currentScenario) scenSettings ++ "/" ++ (show . length . scenarioPool) scenSettings
 
 -- | Creates a bar that helps the user navigate through several scenarios.
+--   The passed @MVar@ is not accessed by this function but unpacked on each fired relevant event.
 --   
 --   The widget contains buttons to reset, decrement and increment the current scenario and a button to select another scenario input file.
 createLevelSelector :: (ParsableScenario sc, ScenarioController ctrl sc IO) => ctrl                            -- ^ controller where to register listeners on
@@ -97,6 +98,7 @@ createLevelSelector ctrl gRef = do
    return (hbox, ctrl')
 
 -- | Creates a standard shift window and uses the passed widget as playing field.
+--   The passed @MVar@ is not accessed by this function but unpacked on each fired relevant event.
 -- 
 -- ==== See also
 -- @'keyboardHandler'@
@@ -138,6 +140,7 @@ loadDefaultIconList = do
               sequence $ fmap (\fp -> pixbufNewFromFile (iconDir ++ pathSeparator:fp)) content
       else putStrLn ("warning: failed to load icon directory " ++ iconDir) >> return []
 
+
 main :: IO ()
 main = do
    _ <- initGUI
@@ -177,11 +180,12 @@ main = do
    (canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
    (win2, ctrl) <- createShiftGameWindow ctrl keyHandler gRef canvas
    
-   _ <- swapMVar gRef (gameSett, ctrl)
 
    _ <- win1 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
    _ <- win2 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
-   (_, ctrl) <- autoAdvanceLevel gRef
+   (_, ctrl) <- setupAutoAdvanceLevel ctrl gRef
+
+   _ <- swapMVar gRef (gameSett, ctrl)
 
    wins <- takeMVar wRef
    putMVar wRef (win1:win2:wins)
@@ -189,6 +193,9 @@ main = do
    mainGUI
 
 -- | Creates a shift playing field that uses a text area to display the scenario.
+--
+-- ==== See also
+-- @'createTextViewLink'@
 createTextBasedView :: ScenarioController ctrl MatrixScenario IO => ctrl                   -- ^ input controller where to register as listener
                                                                  -> IO (TextView, ctrl)    -- ^ created @TextView@ and updated controller
 createTextBasedView ctrl = do
@@ -205,6 +212,9 @@ createTextBasedView ctrl = do
     return (textArea, ctrl')
 
 -- | Creates a shift playing field that draws the playing field using bitmaps.
+--
+-- ==== See also
+-- @'createCanvasViewLink'@
 createGraphicsBasedView :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl                    -- ^ input controller where to register as listener
                                                                         -> ScenarioState sc        -- ^ initial scenario state
                                                                         -> IO (DrawingArea, ctrl)  -- ^ created @DrawingArea@ and updated controller
@@ -218,8 +228,11 @@ createGraphicsBasedView ctrl scs = do
     return (canvas, ctrl')
 
 -- | Creates a UI bar element that displays the amount of the player's moves and a victory notification.
-createInfoBar :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl                 -- ^ input controller where to register as listener
-                                                           -> IO (Statusbar, ctrl)    -- ^ created @Statusbar@ and updated controller
+--
+-- ==== See also
+-- @'createStatusBarLink'@
+createInfoBar :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl                    -- ^ input controller where to register as listener
+                                                              -> IO (Statusbar, ctrl)    -- ^ created @Statusbar@ and updated controller
 createInfoBar ctrl = do
     infobar <- statusbarNew
     lst <- createStatusBarLink infobar
@@ -227,13 +240,17 @@ createInfoBar ctrl = do
     return (infobar, ctrl')
 
 -- | Creates and registers a listener to advance to the next level automatically after some seconds.
-autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (GameSettings sc, ctrl)        -- ^ variable storing the game settings and controller
-                                                                 -> IO (LevelProgressor sc ctrl, ctrl)  -- ^ created listener and updated controller (same as in @MVar@)
-autoAdvanceLevel gRef = do
-    gameVar@(_, ctrl) <- takeMVar gRef
+--   The passed @MVar@ is not accessed by this function but unpacked on each fired relevant event.
+--
+-- ==== See also
+-- @'createLevelProgressor'@
+setupAutoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl                                -- ^ initial controller where to register as listener
+                                                                      -> MVar (GameSettings sc, ctrl)        -- ^ variable storing the game settings and controller
+                                                                      -> IO (LevelProgressor sc ctrl, ctrl)  -- ^ created listener and updated controller,
+                                                                                                             --   does not update controller in @MVar@ which should be done by the calling function
+setupAutoAdvanceLevel ctrl gRef = do
     let lst = createLevelProgressor gRef
     ctrl' <- controllerAddListener ctrl lst
-    putMVar gRef (gameVar & _2 .~ ctrl')
     return (lst, ctrl')
 
 -- | Creates initial 'GameSettings'.
