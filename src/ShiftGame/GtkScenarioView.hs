@@ -32,7 +32,7 @@ import           System.Directory (doesFileExist)
 import           System.FilePath (pathSeparator)
 
 import LensNaming
-import ShiftGame.Helpers
+--import ShiftGame.Helpers
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 
@@ -392,7 +392,7 @@ instance (Scenario sc, ScenarioController ctrl sc IO) => UpdateListener (LevelPr
           then do  -- initiate level progression
             putStrLn "shortly progressing to next level"
             me <- myThreadId
-            -- disable player movement and register stalled change, let controller unchanged
+            -- disable player movement and register stalled change, leave controller unchanged
             putMVar gRef (var & _1 %~ (lensStalledScenarioChange .~ ChangeStalled me (currentScenario scenSettings + 1))
                                     . (lensUserInputControl . lensMovementMode .~ MovementDisabled))
 

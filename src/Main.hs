@@ -15,7 +15,6 @@
 
 module Main where
 
---import           Control.DeepSeq
 import           Control.Concurrent
 --import           Control.Exception
 import           Control.Lens
@@ -23,7 +22,6 @@ import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
 import           Data.List
-import           Data.Maybe
 import           Graphics.UI.Gtk hiding(get, set)
 import qualified Graphics.UI.Gtk as Gtk
 import           System.Directory (doesFileExist, doesDirectoryExist, getDirectoryContents)
@@ -33,21 +31,24 @@ import           System.Glib.GError
 import           System.Glib.UTFString
 import           System.IO
 
-import ShiftGame.Helpers
+--import ShiftGame.Helpers
 import ShiftGame.GtkScenarioView
 import ShiftGame.GtkShiftIO
 import ShiftGame.Scenario
 import ShiftGame.ScenarioController
 import ShiftGame.ShiftIO
 
--- | Returns the string that displays the current scenario and the total number of scenarios.
+-- | Returns a string that displays the current scenario and the total number of scenarios.
 getScenarioLevelDisplay :: ScenarioSettings sc -> String
 getScenarioLevelDisplay scenSettings = (display . incId . currentScenario) scenSettings ++ "/" ++ (show . length . scenarioPool) scenSettings
 
--- | Creates a widget that helps the user navigate through several scenarios.
+-- | Creates a bar that helps the user navigate through several scenarios.
 --   
 --   The widget contains buttons to reset, decrement and increment the current scenario and a button to select another scenario input file.
-createLevelSelector :: ScenarioController ctrl MatrixScenario IO => ctrl -> MVar (GameSettings MatrixScenario, ctrl) -> IO (HBox, ctrl)
+createLevelSelector :: (ParsableScenario sc, ScenarioController ctrl sc IO) => ctrl                            -- ^ controller where to register listeners on
+                                                                            -> MVar (GameSettings sc, ctrl)    -- ^ variable storing game state and controller for future events
+                                                                            -> IO (HBox, ctrl)                 -- ^ created widget and updated controller,
+                                                                                                               --   controller is not updated in the @MVar@, it should be done within the calling function
 createLevelSelector ctrl gRef = do
    -- widget creation
    hbox <- hBoxNew False 4
@@ -95,7 +96,16 @@ createLevelSelector ctrl gRef = do
    _ <- openLevelBtn `on` buttonActivated $ void $ forkIO (void $ selectScenarioFile gRef)
    return (hbox, ctrl')
 
-createShiftGameWindow :: (WidgetClass w, ScenarioController ctrl MatrixScenario IO) => ctrl -> EventM EKey Bool -> MVar (GameSettings MatrixScenario, ctrl) -> w -> IO (Window, ctrl)
+-- | Creates a standard shift window and uses the passed widget as playing field.
+-- 
+-- ==== See also
+-- @'keyboardHandler'@
+createShiftGameWindow :: (ParsableScenario sc, WidgetClass w, ScenarioController ctrl sc IO) => ctrl                          -- ^ controller where to register listeners on
+                                                                                             -> EventM EKey Bool              -- ^ key event handler to register on passed playing field widget
+                                                                                             -> MVar (GameSettings sc, ctrl)  -- ^ variable containing game state and controller for future events (see 'createLevelSelector')
+                                                                                             -> w                             -- ^ playing field widget to add to the created window (among other generated widgets)
+                                                                                             -> IO (Window, ctrl)             -- ^ created widget and updated controller,
+                                                                                                                              --   controller is not updated in the @MVar@, it should be done within the calling function
 createShiftGameWindow ctrl keyHandler gRef widget = do
    window <- windowNew
    vbox <- vBoxNew False 0    -- main container for window
@@ -116,6 +126,7 @@ createShiftGameWindow ctrl keyHandler gRef widget = do
    widgetShowAll window
    return (window, ctrl)
 
+-- | Loads a list of application icons (of possibly different size) from a standard path.
 loadDefaultIconList :: IO [Pixbuf]
 loadDefaultIconList = do
     let formats = fmap (('.':) . glibToString) pixbufGetFormats    -- supported image file extensions, prepended with '.'
@@ -131,7 +142,7 @@ main :: IO ()
 main = do
    _ <- initGUI
 
-   iconList <- catchGErrorJustDomain loadDefaultIconList (\(err::PixbufError) msg -> hPutStrLn stderr (glibToString msg) >> return [])
+   iconList <- catchGErrorJustDomain loadDefaultIconList (\(_::PixbufError) msg -> hPutStrLn stderr (glibToString msg) >> return [])
    windowSetDefaultIconList iconList
 
    -- read level
@@ -154,7 +165,7 @@ main = do
        gameSett = initSettings scenStates
        sc = view lensScenarioSettings gameSett
        currentScen = getScenarioFromPool sc (currentScenario sc) :: ScenarioState MatrixScenario
-       ctrl = initControllerState currentScen  :: ControllerState IO MatrixScenario
+       ctrl = initControllerState currentScen
    gRef <- newMVar (gameSett, ctrl)            :: IO (MVar (GameSettings MatrixScenario, ControllerState IO MatrixScenario))
    wRef <- newMVar []                          :: IO (MVar [Window])
 
@@ -177,8 +188,9 @@ main = do
    
    mainGUI
 
-
-createTextBasedView :: ScenarioController ctrl MatrixScenario IO => ctrl -> IO (TextView, ctrl)
+-- | Creates a shift playing field that uses a text area to display the scenario.
+createTextBasedView :: ScenarioController ctrl MatrixScenario IO => ctrl                   -- ^ input controller where to register as listener
+                                                                 -> IO (TextView, ctrl)    -- ^ created @TextView@ and updated controller
 createTextBasedView ctrl = do
     textArea <- textViewNew
     textViewSetEditable  textArea False
@@ -192,8 +204,10 @@ createTextBasedView ctrl = do
     ctrl' <- controllerAddListener ctrl lst
     return (textArea, ctrl')
 
-
-createGraphicsBasedView :: ScenarioController ctrl MatrixScenario IO => ctrl -> ScenarioState MatrixScenario -> IO (DrawingArea, ctrl)
+-- | Creates a shift playing field that draws the playing field using bitmaps.
+createGraphicsBasedView :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl                    -- ^ input controller where to register as listener
+                                                                        -> ScenarioState sc        -- ^ initial scenario state
+                                                                        -> IO (DrawingArea, ctrl)  -- ^ created @DrawingArea@ and updated controller
 createGraphicsBasedView ctrl scs = do
     canvas <- drawingAreaNew
     widgetModifyBg canvas StateNormal (Color 0xFFFF 0xFFFF 0xFFFF)
@@ -203,14 +217,18 @@ createGraphicsBasedView ctrl scs = do
     ctrl' <- controllerAddListener ctrl lst
     return (canvas, ctrl')
 
-createInfoBar :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl -> IO (Statusbar, ctrl)
+-- | Creates a UI bar element that displays the amount of the player's moves and a victory notification.
+createInfoBar :: (Scenario sc, ScenarioController ctrl sc IO) => ctrl                 -- ^ input controller where to register as listener
+                                                           -> IO (Statusbar, ctrl)    -- ^ created @Statusbar@ and updated controller
 createInfoBar ctrl = do
     infobar <- statusbarNew
     lst <- createStatusBarLink infobar
     ctrl' <- controllerAddListener ctrl lst
     return (infobar, ctrl')
 
-autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (GameSettings sc, ctrl) -> IO (LevelProgressor sc ctrl, ctrl)
+-- | Creates and registers a listener to advance to the next level automatically after some seconds.
+autoAdvanceLevel :: (Scenario sc, ScenarioController ctrl sc IO) => MVar (GameSettings sc, ctrl)        -- ^ variable storing the game settings and controller
+                                                                 -> IO (LevelProgressor sc ctrl, ctrl)  -- ^ created listener and updated controller (same as in @MVar@)
 autoAdvanceLevel gRef = do
     gameVar@(_, ctrl) <- takeMVar gRef
     let lst = createLevelProgressor gRef
@@ -218,6 +236,7 @@ autoAdvanceLevel gRef = do
     putMVar gRef (gameVar & _2 .~ ctrl')
     return (lst, ctrl')
 
+-- | Creates initial 'GameSettings'.
 initSettings :: Scenario sc => [ScenarioState sc] -> GameSettings sc
 initSettings s = let 
     uic = UserInputControl { keysLeft  = map (keyFromName . stringToGlib) ["Left", "a", "A"]
@@ -251,9 +270,11 @@ quitAllWindows wRef = do
 -- that is the reason why an 'MVar' is used.
 -- | Processes keyboard events and determines the resulting player action.
 --   Takes @MVar (GameSettings sc, ctrl)@ before @MVar [Window]@.
-keyboardHandler :: (ParsableScenario sc, ScenarioController ctrl sc IO) => MVar (GameSettings sc, ctrl) -> MVar [Window] -> EventM EKey Bool
+keyboardHandler :: (ParsableScenario sc, ScenarioController ctrl sc IO) => MVar (GameSettings sc, ctrl)    -- ^ variable storing game state and controller
+                                                                        -> MVar [Window]                   -- ^ windows to close when quitting the application
+                                                                        -> EventM EKey Bool                -- ^ key event to register on other widgets
 keyboardHandler gRef wRef = do 
-    gameVar@(g@(GameSettings scenSettings uic stalled), ctrl) <- (lift . readMVar) gRef    -- only readMVar
+    (g@(GameSettings scenSettings uic stalled), ctrl) <- (lift . readMVar) gRef    -- only readMVar
     keyV <- eventKeyVal
     -- test to quit game
     b <- if (keyV `elem` keysQuit uic)
@@ -286,7 +307,7 @@ keyboardHandler gRef wRef = do
       -- undo last move
       else if (keyV `elem` keysUndo uic)
       then lift $ forkIO (do
-             gameVar@(gSett, ctrl) <- takeMVar gRef
+             (gSett, ctrl) <- takeMVar gRef
              (err, ctrl') <- runStateT undoAction ctrl
              gSett' <- case err of
                             Just e  -> do unless (e == NoAction) $ putStrLn ("undo : " ++ show e)
@@ -298,7 +319,7 @@ keyboardHandler gRef wRef = do
       -- redo last undo
       else if (keyV `elem` keysRedo uic)
       then lift $ forkIO (do
-             gameVar@(gSett, ctrl) <- takeMVar gRef
+             (gSett, ctrl) <- takeMVar gRef
              (err, ctrl') <- runStateT redoAction ctrl
              gSett' <- case err of
                             Just e -> do unless (e == NoAction) $ putStrLn ("redo : " ++ show e)
