@@ -16,12 +16,16 @@
 module Main where
 
 import           Control.Concurrent
+import           Control.Applicative
 --import           Control.Exception
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.State.Lazy
+import           Data.Char
+import qualified Data.EnumSet as ES
 import           Data.List
+import           Data.Maybe
 import           Graphics.UI.Gtk hiding(get, set)
 import qualified Graphics.UI.Gtk as Gtk
 import           System.Directory (doesFileExist, doesDirectoryExist, getDirectoryContents)
@@ -140,6 +144,21 @@ loadDefaultIconList = do
               sequence $ fmap (\fp -> pixbufNewFromFile (iconDir ++ pathSeparator:fp)) content
       else putStrLn ("warning: failed to load icon directory " ++ iconDir) >> return []
 
+-- | Modes for displayal of the game field.
+data ViewMode = GraphicalViewMode -- ^ display within a window based on bitmap painting
+              | TextualViewMode   -- ^ display within a window as ASCII characters
+              deriving (Eq, Show, Read, Ord, Bounded, Enum)
+
+processInputParameters :: [String] -> (Maybe String, ES.EnumSet ViewMode)
+processInputParameters inputs =
+  let hasAscii = isJust $ find ((== "-ascii") . map toLower) inputs
+      hasFancy = isJust $ find ((== "-graphical") . map toLower) inputs
+      viewModeList = (if hasAscii then TextualViewMode else GraphicalViewMode) : if hasFancy then [GraphicalViewMode] else []
+      remInputs = [ a | a <- inputs, (not . (`elem` ["-ascii", "-graphical"])) a]
+  in if null remInputs
+      then (Nothing, ES.fromList viewModeList)
+      else ((Just . head) remInputs, ES.fromList viewModeList)
+
 
 main :: IO ()
 main = do
@@ -148,15 +167,17 @@ main = do
    iconList <- catchGErrorJustDomain loadDefaultIconList (\(_::PixbufError) msg -> hPutStrLn stderr (glibToString msg) >> return [])
    windowSetDefaultIconList iconList
 
-   -- read level
+   -- read params
    args <- getArgs
-   let paramLevelPath = if null args
-                          then "level.txt"
-                          else head args
+   let (mbPath, windowModes) = processInputParameters args
+   -- process level
+       paramLevelPath = case mbPath of
+                             Nothing -> "levels" ++ pathSeparator:"level.txt"
+                             Just p -> p
    levelFileExist <- doesFileExist paramLevelPath
    mbLevelPath <- if levelFileExist
                     then return (Just paramLevelPath)
-                    else do unless (null args) $
+                    else do unless (isNothing mbPath) $
                                 putStrLn ("failed to load level file: " ++ paramLevelPath ++ " does not exist")
                             showSelectScenarioDialog
    mbScenStates <- maybe (return Nothing) (readScenario) mbLevelPath
@@ -174,21 +195,46 @@ main = do
 
    let keyHandler = keyboardHandler gRef wRef
 
-   (textArea, ctrl) <- createTextBasedView ctrl
-   (win1, ctrl) <- createShiftGameWindow ctrl keyHandler gRef textArea
+   -- setup textual mode if it is selected
+   (windows, ctrl) <- if (TextualViewMode `ES.member` windowModes)
+                        then do putStrLn "text"
+                                (textArea, ctrl) <- createTextBasedView ctrl
+                                (win, ctrl) <- createShiftGameWindow ctrl keyHandler gRef textArea
+                                return ([win], ctrl)
+                        else return ([], ctrl)
+   -- setup graphical mode if it is selected
+   (windows, ctrl) <- if (GraphicalViewMode `ES.member` windowModes)
+                        then do putStrLn "graphics"
+                                (canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
+                                (win, ctrl) <- createShiftGameWindow ctrl keyHandler gRef canvas
+                                return (win:windows, ctrl)
+                        else return (windows, ctrl)
+   -- empty window fallback if no mode is selected
+   windows <- if (ES.null windowModes)
+                then do win <- windowNew
+                        widgetShowAll win
+                        return (win:windows)
+                else return windows
+   -- close whole application when one window is closed
+   sequence_ $ fmap (\win -> win `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False) windows
 
-   (canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
-   (win2, ctrl) <- createShiftGameWindow ctrl keyHandler gRef canvas
+   --(textArea, ctrl) <- createTextBasedView ctrl
+   --(win1, ctrl) <- createShiftGameWindow ctrl keyHandler gRef textArea
+
+   --(canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
+   --(win2, ctrl) <- createShiftGameWindow ctrl keyHandler gRef canvas
    
 
-   _ <- win1 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
-   _ <- win2 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
+   --_ <- win1 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
+   --_ <- win2 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
    (_, ctrl) <- setupAutoAdvanceLevel ctrl gRef
 
    _ <- swapMVar gRef (gameSett, ctrl)
 
-   wins <- takeMVar wRef
-   putMVar wRef (win1:win2:wins)
+   --wins <- takeMVar wRef
+   --putMVar wRef (win1:win2:wins)
+   storedWindows <- takeMVar wRef
+   putMVar wRef (windows ++ storedWindows)
    
    mainGUI
 
