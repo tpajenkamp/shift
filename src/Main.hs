@@ -317,7 +317,7 @@ keyboardHandler gRef wRef = do
                           else Nothing
           -- test if valid movement key has been pressed
           case mbPlayerAction of
-               Nothing -> do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV
+               Nothing -> -- do lift . putStrLn $ "unknown key command: (" ++ show keyV ++ ") " ++ (show . keyName) keyV   -- debug message
                              return False
                Just action -> do
                  gameVar@(GameSettings scenSettings uic _, ctrl) <- lift $ takeMVar gRef    -- get lock
@@ -325,10 +325,10 @@ keyboardHandler gRef wRef = do
                  if (view (lensMovementMode) uic == MovementEnabled)
                    then lift $ void $ forkIO (do
                           gameVar@(_, ctrl) <- takeMVar gRef
-                          (putStrLn . show) action
+                          -- (putStrLn . show) action    -- debug message
                           (denyReason, ctrl') <- runStateT (runPlayerMove action) ctrl
-                          when (isJust denyReason) $
-                              (putStrLn . show . fromJust) denyReason    -- failure
+                          -- when (isJust denyReason) $
+                          --     (putStrLn . show . fromJust) denyReason    -- failure debug message
                           putMVar gRef (gameVar & _2 .~ ctrl')
                         )
                    -- if movement is disabled AND delayed level change is stalled: perform now

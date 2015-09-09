@@ -34,9 +34,11 @@ instance ParsableScenario MatrixScenario where
                                  (error . fromLeft) possiblyParsed
                           let (myScenarioStates, myParseState) = fromRight possiblyParsed
                           _ <- mapM evaluate myScenarioStates
-                          putStrLn "warnings:"
-                          putStrLn $ (unlines . map show . reverse . warnings) myParseState
-                          _ <- mapM displayScenarioData myScenarioStates
+                          let lvlWarnings = (reverse . warnings) myParseState
+                          unless (null lvlWarnings) $ do
+                              putStrLn "warnings:"
+                              putStrLn $ (unlines . map show) lvlWarnings    -- show level warning messages
+                          -- _ <- mapM displayScenarioData myScenarioStates    -- debug output of scenarios
                           return myScenarioStates -- todo: parse error
 
 instance ParsableScenario GenericScenario where
