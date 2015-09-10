@@ -149,7 +149,9 @@ data ViewMode = GraphicalViewMode -- ^ display within a window based on bitmap p
               | TextualViewMode   -- ^ display within a window as ASCII characters
               deriving (Eq, Show, Read, Ord, Bounded, Enum)
 
-processInputParameters :: [String] -> (Maybe String, ES.EnumSet ViewMode)
+-- | Interprets input arguments. Default 'ViewMode' is 'GraphicalViewMode'.
+processInputParameters :: [String]    -- input parameters, result of 'getArgs' 
+                       -> (Maybe String, ES.EnumSet ViewMode)    -- 'Just' the level path, if given, and an 'EnumMap' of selected display modes.
 processInputParameters inputs =
   let hasAscii = isJust $ find ((== "-ascii") . map toLower) inputs
       hasFancy = isJust $ find ((== "-graphical") . map toLower) inputs
@@ -197,15 +199,13 @@ main = do
 
    -- setup textual mode if it is selected
    (windows, ctrl) <- if (TextualViewMode `ES.member` windowModes)
-                        then do putStrLn "text"
-                                (textArea, ctrl) <- createTextBasedView ctrl
+                        then do (textArea, ctrl) <- createTextBasedView ctrl
                                 (win, ctrl) <- createShiftGameWindow ctrl keyHandler gRef textArea
                                 return ([win], ctrl)
                         else return ([], ctrl)
    -- setup graphical mode if it is selected
    (windows, ctrl) <- if (GraphicalViewMode `ES.member` windowModes)
-                        then do putStrLn "graphics"
-                                (canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
+                        then do (canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
                                 (win, ctrl) <- createShiftGameWindow ctrl keyHandler gRef canvas
                                 return (win:windows, ctrl)
                         else return (windows, ctrl)
