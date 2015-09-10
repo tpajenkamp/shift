@@ -218,15 +218,6 @@ main = do
    -- close whole application when one window is closed
    sequence_ $ fmap (\win -> win `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False) windows
 
-   --(textArea, ctrl) <- createTextBasedView ctrl
-   --(win1, ctrl) <- createShiftGameWindow ctrl keyHandler gRef textArea
-
-   --(canvas, ctrl) <- createGraphicsBasedView ctrl currentScen
-   --(win2, ctrl) <- createShiftGameWindow ctrl keyHandler gRef canvas
-   
-
-   --_ <- win1 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
-   --_ <- win2 `on` deleteEvent $ lift (quitAllWindows wRef) >> lift mainQuit >> return False
    (_, ctrl) <- setupAutoAdvanceLevel ctrl gRef
 
    _ <- swapMVar gRef (gameSett, ctrl)
