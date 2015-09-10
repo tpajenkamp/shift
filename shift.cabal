@@ -12,11 +12,13 @@ data-dir: ""
 extra-source-files: README.md
  
 executable shift
-    build-depends: base >=4.6 && <4.9, directory >= 1.0.0.0, filepath >= 1.0,
-                   array -any, containers -any, template-haskell -any,
-                   mtl -any, transformers -any, vector -any, enummapset-th -any,
-                   attoparsec -any, bytestring -any,
-                   gtk3 >=0.13, cairo -any, glib -any, lens >= 3.8
+    build-depends: base >=4.6,
+                   array -any, attoparsec >=0.10.0.0, bytestring -any,
+                   containers -any, enummapset-th -any, lens >= 3.8, mtl >=2.0,
+                   template-haskell >=2.4, transformers <0.4.0.0 || >0.4.0.0,
+                   vector <0.10.9.3 || >0.10.9.3 && <0.10.12.0 || >0.10.12.0,
+                   directory >=1.0.0.0, filepath >=1.0,
+                   cairo >=0.13, gtk3 >=0.13, glib >=0.13
     main-is: Main.hs
     buildable: True
     default-language: Haskell2010
