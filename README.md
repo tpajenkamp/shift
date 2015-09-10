@@ -18,6 +18,16 @@ Required: *ghc*, *cabal*, *gtk3*
 > $ cabal build  
 > $ cabal install  
 
+**Note**: Installing the dependencies may fail if the package versions of
+packages *gtk2hs-buildtools* is built against do not match the constraints
+of other package dependencies or *shift* itself (which are checked one step
+later).
+
+In that case, it may help to first try *cabal install --only-dependencies*
+(which shoul fail), then *cabal install gtk2hs-buildtools* and afterwards
+the other dependencies again. Another option is to use the *--constraints*
+option of cabal when installing gtk2hs-buildtools.
+
 
 ## Running *shift*
 
