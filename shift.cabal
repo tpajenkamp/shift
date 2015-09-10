@@ -15,7 +15,8 @@ executable shift
     build-depends: base >=4.6,
                    array -any, attoparsec >=0.10.0.0, bytestring -any,
                    containers -any, enummapset-th -any, mtl >=2.0,
-                   template-haskell >=2.4, transformers <0.4.0.0 || >0.4.0.0, vector -any,
+                   template-haskell >=2.4, transformers <0.4.0.0 || >0.4.0.0,
+                   vector <0.10.9.3 || >0.10.9.3 && <0.10.12.0 || >0.10.12.0,
                    directory >= 1.0.0.0, filepath >= 1.0,
                    cairo >=0.13, gtk3 >=0.13, glib >=0.13, lens >= 3.8
     main-is: Main.hs
